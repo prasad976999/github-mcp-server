@@ -56,3 +56,25 @@ class Repository(RepoSummary):
 class RepoSearchResult(BaseModel):
     total_count: int
     items: list[RepoSummary]
+
+
+class DirectoryEntry(BaseModel):
+    name: str
+    path: str
+    type: str  # "file", "dir", "symlink" or "submodule"
+    size: int
+
+
+class DirectoryListing(BaseModel):
+    repository: str
+    path: str
+    entries: list[DirectoryEntry]
+
+
+class FileContents(BaseModel):
+    repository: str
+    path: str
+    size: int
+    is_binary: bool
+    truncated: bool
+    content: str | None
