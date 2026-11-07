@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server, written with the official Python MCP SDK, that lets AI assistants (Claude Desktop, Claude Code, any MCP client) explore and work with GitHub: search repositories, read code, triage issues and review pull requests.
 
-> Status: step 3 of 8 (reading code: `list_directory`, `get_file_contents`). See [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: step 4 of 8 (issues, pull requests, safe pagination). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Architecture
 

@@ -6,7 +6,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context, MCPServer
@@ -21,6 +21,10 @@ from github_mcp.models import (
     DirectoryEntry,
     DirectoryListing,
     FileContents,
+    IssueList,
+    IssueSummary,
+    PullRequestList,
+    PullRequestSummary,
     RepoSearchResult,
     Repository,
     RepoSummary,
@@ -55,7 +59,9 @@ mcp = MCPServer(
     instructions=(
         "Tools for exploring GitHub repositories, issues and pull requests. "
         "Use search_repositories to find repositories, then get_repository for details. "
-        "To read code, call list_directory to explore, then get_file_contents for one file."
+        "To read code, call list_directory to explore, then get_file_contents for one file. "
+        "list_issues and list_pull_requests return the most recent first; has_more=true "
+        "means there are more than you were given."
     ),
     lifespan=lifespan,
 )
@@ -76,6 +82,11 @@ Ref = Annotated[
     Field(description="Branch, tag or commit SHA. Defaults to the repository's default branch."),
 ]
 
+State = Annotated[
+    Literal["open", "closed", "all"], Field(description="Filter by state. Defaults to open.")
+]
+Limit = Annotated[int, Field(ge=1, le=100, description="Maximum items to return, newest first")]
+
 
 class ServerStatus(BaseModel):
     version: str
@@ -95,10 +106,8 @@ def server_status() -> ServerStatus:
 
 @mcp.tool(annotations=READ_ONLY)
 async def get_repository(
-    owner: Annotated[
-        str, Field(description="Account or organisation that owns the repo, e.g. 'pallets'")
-    ],
-    repo: Annotated[str, Field(description="Repository name, e.g. 'flask'")],
+    owner: Owner,
+    repo: Repo,
     ctx: Context,
 ) -> Repository:
     """Get details of one GitHub repository: description, stars, language, topics, license,
@@ -221,6 +230,68 @@ async def get_file_contents(
     result.truncated = len(text) > max_chars
     result.content = text[:max_chars]
     return result
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def list_issues(
+    owner: Owner,
+    repo: Repo,
+    ctx: Context,
+    state: State = "open",
+    labels: Annotated[
+        str | None, Field(description="Comma-separated label names, e.g. 'bug,help wanted'")
+    ] = None,
+    limit: Limit = 20,
+) -> IssueList:
+    """List issues in a repository, newest first. Pull requests are left out; use
+    list_pull_requests for those."""
+    params = {"state": state, "sort": "created", "direction": "desc"}
+    if labels:
+        params["labels"] = labels
+    try:
+        # GitHub's issues endpoint also returns pull requests (they carry a
+        # "pull_request" key), so we filter them out while paging.
+        items, has_more = await _github(ctx).get_paginated(
+            f"/repos/{owner}/{repo}/issues",
+            params,
+            max_items=limit,
+            keep=lambda item: "pull_request" not in item,
+        )
+    except GitHubAPIError as exc:
+        raise ToolError(str(exc)) from exc
+    return IssueList(
+        repository=f"{owner}/{repo}",
+        state=state,
+        returned=len(items),
+        has_more=has_more,
+        items=[IssueSummary.from_api(item) for item in items],
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def list_pull_requests(
+    owner: Owner,
+    repo: Repo,
+    ctx: Context,
+    state: State = "open",
+    limit: Limit = 20,
+) -> PullRequestList:
+    """List pull requests in a repository, newest first, with their branch names and
+    draft status."""
+    params = {"state": state, "sort": "created", "direction": "desc"}
+    try:
+        items, has_more = await _github(ctx).get_paginated(
+            f"/repos/{owner}/{repo}/pulls", params, max_items=limit
+        )
+    except GitHubAPIError as exc:
+        raise ToolError(str(exc)) from exc
+    return PullRequestList(
+        repository=f"{owner}/{repo}",
+        state=state,
+        returned=len(items),
+        has_more=has_more,
+        items=[PullRequestSummary.from_api(item) for item in items],
+    )
 
 
 def _decode_text(raw: bytes) -> str | None:

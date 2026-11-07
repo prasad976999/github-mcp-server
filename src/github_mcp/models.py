@@ -78,3 +78,73 @@ class FileContents(BaseModel):
     is_binary: bool
     truncated: bool
     content: str | None
+
+
+class IssueSummary(BaseModel):
+    number: int
+    title: str
+    state: str
+    author: str | None
+    labels: list[str]
+    comments: int
+    created_at: datetime
+    updated_at: datetime
+    url: str
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> "IssueSummary":
+        return cls(
+            number=data["number"],
+            title=data["title"],
+            state=data["state"],
+            author=(data.get("user") or {}).get("login"),
+            labels=[label["name"] for label in data.get("labels", [])],
+            comments=data.get("comments", 0),
+            created_at=data["created_at"],
+            updated_at=data["updated_at"],
+            url=data["html_url"],
+        )
+
+
+class IssueList(BaseModel):
+    repository: str
+    state: str
+    returned: int
+    has_more: bool
+    items: list[IssueSummary]
+
+
+class PullRequestSummary(BaseModel):
+    number: int
+    title: str
+    state: str
+    author: str | None
+    draft: bool
+    head: str
+    base: str
+    created_at: datetime
+    updated_at: datetime
+    url: str
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> "PullRequestSummary":
+        return cls(
+            number=data["number"],
+            title=data["title"],
+            state=data["state"],
+            author=(data.get("user") or {}).get("login"),
+            draft=data.get("draft", False),
+            head=data["head"]["ref"],
+            base=data["base"]["ref"],
+            created_at=data["created_at"],
+            updated_at=data["updated_at"],
+            url=data["html_url"],
+        )
+
+
+class PullRequestList(BaseModel):
+    repository: str
+    state: str
+    returned: int
+    has_more: bool
+    items: list[PullRequestSummary]
