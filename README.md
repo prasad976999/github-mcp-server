@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server, written with the official Python MCP SDK, that lets AI assistants (Claude Desktop, Claude Code, any MCP client) explore and work with GitHub: search repositories, read code, triage issues and review pull requests.
 
-> Status: step 6 of 8 (resources, prompts and a guarded write tool). See [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: step 7 of 8 (CI with GitHub Actions, coverage, stricter linting). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Architecture
 
@@ -49,8 +49,10 @@ Layers, each with one job:
 - Cursor-style pagination via GitHub `Link` headers, with a hard page cap
 - Rate-limit awareness (`X-RateLimit-Remaining`, `Retry-After`) and exponential backoff on 5xx
 - Errors returned as tool errors the model can read, never crashes
-- Tests with `pytest` + `respx` (mocked HTTP) + the SDK's in-process `Client`
-- Dockerfile, GitHub Actions CI, demo GIF
+- Tests with `pytest` + `respx` (mocked HTTP) + the SDK's in-process `Client`, 90% coverage floor
+- GitHub Actions CI: ruff lint and format checks, tests on Linux and Windows with Python 3.11 to 3.13
+- Dependabot keeps GitHub Actions and Python dependencies up to date
+- Dockerfile and demo GIF (coming in step 8)
 
 ## Quick start
 
@@ -65,4 +67,12 @@ Connect it to Claude Code:
 
 ```bash
 claude mcp add github -e GITHUB_TOKEN=github_pat_xxx -- uv --directory /path/to/github-mcp-server run github-mcp
+```
+
+## Checks (the same ones CI runs)
+
+```bash
+uv run ruff check .            # lint
+uv run ruff format --check .   # formatting
+uv run pytest --cov            # tests, fails if coverage drops below 90%
 ```

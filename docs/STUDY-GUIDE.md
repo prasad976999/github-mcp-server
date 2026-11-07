@@ -1,6 +1,6 @@
 ---
 title: "GitHub MCP Server — Study Guide"
-subtitle: "Everything built in steps 1–6: concepts, code walkthrough, commands and interview answers"
+subtitle: "Everything built in steps 1–7: concepts, code walkthrough, commands and interview answers"
 ---
 
 # How to use this guide
@@ -14,7 +14,7 @@ Suggested study order:
 3. Work through **Part 4** (code walkthrough) with the real files open in VS Code.
 4. Test yourself with **Part 6** (interview questions). Cover the answer, say yours, then compare.
 
-**Progress:** steps 1–6 of 8 complete.
+**Progress:** steps 1–7 of 8 complete.
 
 | Step | What was built | Status |
 |---|---|---|
@@ -23,14 +23,15 @@ Suggested study order:
 | 3 | `list_directory`, `get_file_contents` (reading code) | Done, committed |
 | 4 | `list_issues`, `list_pull_requests`, safe pagination | Done, 21 tests pass on your laptop, committed |
 | 5 | Retries with backoff, rate-limit handling, `get_rate_limit` | Done, 30 tests pass on your laptop, committed |
-| 6 | README resource, two prompts, `create_issue` (off by default) | Built, 43 tests pass |
-| 7–8 | CI with GitHub Actions, Docker and HTTP transport | Coming next |
+| 6 | README resource, two prompts, `create_issue` (off by default) | Done, 43 tests pass on your laptop, committed |
+| 7 | GitHub Actions CI, coverage floor, stricter linting, Dependabot | Built, all checks pass locally; runs on GitHub once pushed |
+| 8 | Docker, HTTP transport, README polish, demo | Coming next |
 
 # Part 1. Your project in one minute
 
 ## The 30-second pitch
 
-> "I built an MCP server in Python that gives AI assistants like Claude safe, structured access to GitHub. It can search repositories, fetch details, browse folders, read source files, and list issues and pull requests. It uses all three MCP primitives: tools, a README resource, and prompts for summarising a repository and reviewing a pull request. I used the official MCP Python SDK, an async httpx client for the GitHub REST API, and Pydantic models to keep outputs small and typed. I focused on tool design: clear names and descriptions, input validation, error messages the model can act on, and guards so large files or long lists never flood the model's context. It retries temporary failures with exponential backoff and handles GitHub's rate limits without hanging. Its one write tool, `create_issue`, is off by default, marked as non-read-only so hosts ask the user first, and never retried blindly. It's covered by tests that mock GitHub, so they run offline in about a second."
+> "I built an MCP server in Python that gives AI assistants like Claude safe, structured access to GitHub. It can search repositories, fetch details, browse folders, read source files, and list issues and pull requests. It uses all three MCP primitives: tools, a README resource, and prompts for summarising a repository and reviewing a pull request. I used the official MCP Python SDK, an async httpx client for the GitHub REST API, and Pydantic models to keep outputs small and typed. I focused on tool design: clear names and descriptions, input validation, error messages the model can act on, and guards so large files or long lists never flood the model's context. It retries temporary failures with exponential backoff and handles GitHub's rate limits without hanging. Its one write tool, `create_issue`, is off by default, marked as non-read-only so hosts ask the user first, and never retried blindly. It's covered by tests that mock GitHub, so they run offline in about two seconds, and GitHub Actions runs lint and the tests on Linux and Windows across three Python versions on every push, with a 90% coverage floor."
 
 ## The 2-minute walkthrough
 
@@ -40,7 +41,7 @@ When an interviewer says *"walk me through your project"*:
 2. **Architecture.** The host (Claude Desktop or Claude Code) launches my server as a subprocess and talks JSON-RPC over stdin/stdout. My server has three layers: the MCP layer (`server.py`) defines the tools, the API layer (`github_client.py`) does HTTP, and the models layer (`models.py`) shapes what the model sees.
 3. **Tools.** `search_repositories`, `get_repository`, `list_directory`, `get_file_contents`, `list_issues`, `list_pull_requests`, `get_rate_limit`, `server_status`, and the write tool `create_issue`. Plus a **resource** (`github://repos/{owner}/{repo}/readme`) and two **prompts** (`summarize_repository`, `review_pull_request`).
 4. **Engineering decisions.** One shared async HTTP client created in the server's lifespan; outputs trimmed from ~100 fields to ~13; pagination that follows GitHub's `Link` headers with a 5-page cap; files cut off at a limit with an explicit `truncated` flag; network errors and 5xx retried with exponential backoff and jitter, rate limits waited out only when the wait is short; writes off by default and never retried after a 5xx; every failure turned into a readable tool error; a fine-grained read-only token loaded from the environment.
-5. **Testing.** `pytest` with `respx` to fake GitHub (including 404s, timeouts, server errors, rate limits, binary and oversized files), calling tools through the SDK's in-process client exactly as a real host would.
+5. **Testing.** `pytest` with `respx` to fake GitHub (including 404s, timeouts, server errors, rate limits, binary and oversized files), calling tools through the SDK's in-process client exactly as a real host would. CI on GitHub Actions runs lint and tests on 2 operating systems × 3 Python versions on every push and pull request, and fails if coverage drops below 90%.
 
 # Part 2. Core concepts
 
@@ -104,6 +105,9 @@ All messages are **JSON-RPC 2.0**: requests with an `id`, `method` and `params`,
 | **Resource template** | A resource URI with placeholders, e.g. `github://repos/{owner}/{repo}/readme`, so one definition serves every repository |
 | **Human in the loop** | A person approves an action before it happens; hosts do this for tools not marked read-only |
 | **Least privilege** | Give a credential only the permissions the job needs, e.g. a read-only token |
+| **CI (continuous integration)** | Every change is automatically linted and tested on a clean machine |
+| **Coverage** | The share of code lines and branches the tests actually run |
+| **Build matrix** | Running the same CI job for every combination, e.g. OS × Python version |
 | **Fine-grained token** | A GitHub token limited to specific permissions and repositories, with an expiry date |
 
 # Part 3. Architecture
@@ -142,6 +146,9 @@ github-mcp-server/
 ├── uv.lock                 # exact versions of every package (reproducible installs)
 ├── .env.example            # documents the env vars; the real .env is git-ignored
 ├── .gitignore              # files git must never commit (.env, .venv, caches)
+├── .github/
+│   ├── workflows/ci.yml    # CI: lint + tests on every push and PR (step 7)
+│   └── dependabot.yml      # automatic dependency update PRs (step 7)
 ├── README.md
 ├── src/github_mcp/
 │   ├── __init__.py         # package version
@@ -185,6 +192,10 @@ Interviewers often ask *"why did you choose X?"* A good answer names the job it 
 | **pytest-asyncio** | Lets pytest run `async def` tests | Our tools are async, so tests must be too | `anyio`'s pytest plugin |
 | **respx** | Fakes GitHub's HTTP responses in tests | Built specifically for httpx; blocks real network calls; can simulate errors and timeouts | `pytest-httpx`, `unittest.mock` (low-level), VCR-style recorded responses |
 | **ruff** | Lints and formats the code | Extremely fast; one tool replaces flake8, isort and black; keeps style consistent | flake8 + black + isort, pylint |
+| **pytest-cov** | Measures test coverage and fails under 90% (step 7) | The standard pytest plugin for `coverage.py`; branch coverage built in | Running `coverage run -m pytest` directly |
+| **GitHub Actions** | Runs CI on every push and pull request (step 7) | Built into GitHub, free for public repositories, huge library of ready-made actions | GitLab CI, CircleCI, Jenkins |
+| **Dependabot** | Opens pull requests for outdated dependencies (step 7) | Built into GitHub; understands `uv.lock` and Actions versions | Renovate |
+| **actionlint** | Checks workflow YAML for mistakes (step 7) | Catches typos and invalid expressions before pushing | Waiting for CI to fail |
 | **MCP Inspector** (`mcp dev`) | A browser UI that acts as an MCP host | Lets you call tools by hand and see the raw results without needing Claude | Testing only through Claude Desktop (slower, less visible) |
 | **Node.js** | Runs the Inspector | The Inspector is a JavaScript app | — |
 | **git** | Version control | Industry standard; one commit per step shows how the project grew | — |
@@ -221,11 +232,26 @@ dependencies = [
 github-mcp = "github_mcp.server:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "respx>=0.21", "ruff>=0.6"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "respx>=0.21", "ruff>=0.6", "pytest-cov>=5"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["src"]
+
+[tool.coverage.run]
+source = ["github_mcp"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 90
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM"]
 ```
 
 - **`pyproject.toml`** is the modern standard file describing a Python project (it replaced `setup.py`).
@@ -237,6 +263,7 @@ pythonpath = ["src"]
 - **`[project.scripts]`** creates a command called `github-mcp` that runs `main()` in `server.py`. Hosts can launch the server by that name.
 - **`[dependency-groups] dev`** holds tools needed only while developing: `pytest` (tests), `pytest-asyncio` (async tests), `respx` (fake HTTP), `ruff` (linter/formatter). Users of the server don't install these.
 - **`asyncio_mode = "auto"`** lets any `async def test_...` run without a decorator. **`pythonpath = ["src"]`** lets tests import `github_mcp`.
+- **`[tool.coverage.*]` and `[tool.ruff.lint]`** (step 7) are explained in *4.9 Continuous integration*.
 
 ## 4.2 `config.py`: settings
 
@@ -1045,7 +1072,8 @@ async def get_file_contents(
     # GitHub only inlines files up to 1 MB; bigger ones come back with encoding "none".
     if data.get("encoding") != "base64":
         raise ToolError(
-            f"'{path}' is {data['size']:,} bytes, too large to read through the GitHub API (1 MB limit)."
+            f"'{path}' is {data['size']:,} bytes, too large to read through the GitHub API "
+            "(1 MB limit)."
         )
 
     raw = base64.b64decode(data["content"])
@@ -1572,7 +1600,165 @@ Automated tests use a *fake* GitHub. These manual checks proved the server works
 | Inspector → `get_rate_limit` (step 5, to do) | Expected: `limit` 5000 with your token; `used` goes up after calling another tool | Confirms the token is used and the budget is read correctly |
 | Inspector → Resources → `readme`, Prompts → `summarize_repository` / `review_pull_request` (step 6, to do) | Expected: README text; the filled-in prompt; a PR's description and diffs | Checks the other two primitives against real data |
 | Inspector → `create_issue` (step 6, to do) | Expected: "Creating issues is turned off" | Proves the safety switch works with the real server |
+| GitHub → **Actions** tab after pushing (step 7, to do) | Expected: 7 green jobs (1 lint, 6 tests) | Proves the project works on a clean machine, on Linux and Windows, Python 3.11 to 3.13 |
 | `git status` before committing | `.env` not listed | Proves the token can never be pushed to GitHub |
+
+## 4.9 Continuous integration (step 7)
+
+### What CI is, and why it matters
+
+**Continuous integration** means every change is automatically built and tested on a clean machine, not just on your laptop. It catches:
+
+- "works on my machine" problems (a file you forgot to commit, a package only installed locally),
+- problems on Python versions or operating systems you didn't try,
+- style drift and lint errors, before anyone reviews the code.
+
+**GitHub Actions** is GitHub's built-in CI. A **workflow** is a YAML file in `.github/workflows/`. It contains **jobs** (each runs on a fresh virtual machine, a **runner**), and each job has **steps** (shell commands or reusable **actions**).
+
+### The workflow, line by line (`.github/workflows/ci.yml`)
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+```
+
+- **`on`**: the **triggers**. Every push to `main`, and every pull request (from any branch). A PR is checked *before* it's merged.
+
+```yaml
+permissions:
+  contents: read
+```
+
+- **Least privilege again.** Each run gets a temporary token; this limits it to reading the code. If a dependency were ever compromised, it couldn't push code or change settings.
+
+```yaml
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+- If you push twice quickly, the first run is cancelled. Its result would be out of date anyway, and it saves CI minutes.
+
+### The lint job
+
+```yaml
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Check formatting
+        run: uv run ruff format --check .
+```
+
+- **`runs-on: ubuntu-latest`**: a fresh Linux machine for every run. Nothing is left over from earlier runs.
+- **`timeout-minutes: 10`**: a stuck job is killed instead of running for the default 6 hours.
+- **`actions/checkout@v4`**: downloads your repository onto the runner.
+- **`astral-sh/setup-uv@v6`**: installs uv. `enable-cache: true` caches downloaded packages between runs, so later runs are faster.
+- **`@v4`, `@v6`**: actions are pinned to a major version, so a breaking change in an action can't silently break CI. (Stricter still is pinning to a full commit SHA; Dependabot, below, keeps these up to date either way.)
+- **`uv sync --locked`**: installs the **exact** versions in `uv.lock`, and **fails if `uv.lock` doesn't match `pyproject.toml`**. That catches the classic mistake of adding a dependency without committing the updated lock file.
+- **`ruff format --check`**: doesn't change files, only fails if any file isn't formatted. Locally you run `uv run ruff format .` to fix it.
+
+### The test job and the matrix
+
+```yaml
+  test:
+    name: Tests (Python ${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked
+      - name: Run tests with coverage (fails under 90%)
+        run: uv run pytest --cov --cov-report=term-missing
+```
+
+- **A matrix** runs the same job for every combination: 2 operating systems × 3 Python versions = **6 jobs in parallel**.
+- **Why Windows?** You develop on Windows and most CI only tests Linux. Paths, line endings and encodings differ, and this catches those bugs.
+- **Why 3.11 to 3.13?** `pyproject.toml` promises `requires-python = ">=3.11"`. The matrix proves that promise is true, from the oldest version you claim to support to the newest.
+- **`"3.11"` in quotes**: in YAML, `3.10` unquoted would become the number `3.1`. Quoting versions is a habit worth having.
+- **`fail-fast: false`**: by default one failing job cancels the rest. Turning that off shows the whole picture, e.g. "fails only on Windows".
+- **No secrets needed**: the tests mock GitHub with respx, so CI never needs your token. This is a big benefit of mocking: **secrets never go near CI**.
+
+I checked the workflow with **actionlint** (a linter for GitHub Actions files) and ran the same commands here with Python 3.11, 3.12 and 3.13: all pass.
+
+### Coverage
+
+```toml
+[tool.coverage.run]
+source = ["github_mcp"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 90
+```
+
+- **Coverage** measures which lines of your code ran during the tests (`pytest-cov` is the pytest plugin for the `coverage` tool).
+- **`branch = true`**: also checks that both sides of each `if` were taken, not just that the line ran. Stricter and more honest.
+- **`fail_under = 90`**: the test run **fails** if coverage drops below 90%. It's a ratchet: new code must come with tests. We're at **about 93%** now.
+- **`show_missing`**: lists the line numbers that never ran, so you know where tests are missing.
+- **Why not 100%?** The remaining lines are mostly defensive fallbacks (malformed headers, unreachable branches). Chasing 100% leads to tests that check nothing useful. **Coverage tells you what is untested, not that tested code is correct**: that's why each guard also has a test that was seen to fail when the code was broken.
+
+### Stricter linting
+
+```toml
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM"]
+```
+
+| Code | Rule set | Catches |
+|---|---|---|
+| `E`, `W` | pycodestyle | Style errors, e.g. lines over 100 characters |
+| `F` | Pyflakes | Real bugs: unused imports, undefined names |
+| `I` | isort | Import order |
+| `B` | flake8-bugbear | Likely bugs, e.g. mutable default arguments |
+| `UP` | pyupgrade | Old syntax that has a modern form (`Optional[X]` → `X \| None`) |
+| `SIM` | flake8-simplify | Code that can be written more simply |
+
+Ruff's default is only `E` and `F`. Turning these on found one line that was too long (fixed by splitting the string). Ruff runs all of these in milliseconds because it's written in Rust.
+
+### Dependabot (`.github/dependabot.yml`)
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+```
+
+- Once a month, GitHub checks for newer versions of the actions and of your Python packages (it reads `uv.lock`) and **opens a pull request** for each update.
+- **CI runs on that pull request**, so you only merge an update if the tests still pass. This is how CI and Dependabot work together: updates are automatic but never untested.
+- Security fixes matter: an out-of-date `httpx` or `pydantic` with a known vulnerability would be flagged.
 
 # Part 5. Commands you used
 
@@ -1587,6 +1773,8 @@ All in PowerShell, inside `C:\Users\prasa\projects\github-mcp-server`.
 | `uv run mcp dev src/github_mcp/server.py` | Starts the server with the **MCP Inspector** in your browser | Lets you call tools by hand, like a host would |
 | `Copy-Item .env.example .env` / `notepad .env` | Creates your local secrets file | Keeps the token out of code and git |
 | `git init` | Starts a git repository in the folder | Version history |
+| `uv run ruff check .` / `uv run ruff format --check .` | Lint and formatting checks, exactly as CI runs them | Fix problems before pushing; `ruff format .` fixes formatting |
+| `uv run pytest --cov` | Tests plus a coverage report; fails under 90% | The same test command CI runs |
 | `git status` | Lists changed and new files | Check `.env` is **not** listed before committing |
 | `git add .` | Stages all changes | Chooses what goes in the next commit |
 | `git commit -m "..."` | Saves a snapshot with a message | One commit per step tells the project's story |
@@ -1760,6 +1948,26 @@ It gives the model the whole pull request up front instead of several tool calls
 **48. What's a resource template?**
 A resource URI with placeholders, like `github://repos/{owner}/{repo}/readme`. One definition serves every repository; clients list templates and then read concrete URIs.
 
+## CI and code quality (step 7)
+
+**49. What does your CI do?**
+On every push to main and every pull request, it checks lint and formatting with ruff and runs the tests with coverage on Linux and Windows, Python 3.11 to 3.13. It installs the exact locked versions and needs no secrets, because GitHub is mocked in the tests.
+
+**50. Why a matrix with Windows and several Python versions?**
+To prove the `requires-python` promise and catch OS-specific bugs such as paths and encodings. I develop on Windows, but most users and servers run Linux.
+
+**51. What does `uv sync --locked` protect against?**
+It fails if the lock file is out of date with `pyproject.toml`, so CI always tests exactly what's committed, and a forgotten lock file update is caught.
+
+**52. What's code coverage, and is 100% the goal?**
+The share of lines and branches the tests execute. I enforce a 90% floor so new code needs tests. 100% isn't the goal: coverage shows what's untested, not that the tests are good, so I also check that key tests fail when the code is broken.
+
+**53. Why `permissions: contents: read` in the workflow?**
+Least privilege: the job's token can only read the code, so a compromised dependency or action couldn't push code or change settings.
+
+**54. What does Dependabot add?**
+Automatic pull requests for outdated or vulnerable dependencies and actions. CI tests each one, so updates happen often but are never untested.
+
 # Part 7. Practise checklist
 
 - [ ] Say the 30-second pitch out loud without notes.
@@ -1771,4 +1979,5 @@ A resource URI with placeholders, like `github://repos/{owner}/{repo}/readme`. O
 - [ ] Explain `get_paginated` line by line, including the same-host check.
 - [ ] Explain the retry loop in `_request`: what is retried, what isn't, and why POST is different.
 - [ ] Explain the five safety layers around `create_issue`.
-- [ ] Answer all 48 questions in your own words, then compare.
+- [ ] Walk through `ci.yml`: triggers, permissions, the matrix, and why `--locked`.
+- [ ] Answer all 54 questions in your own words, then compare.

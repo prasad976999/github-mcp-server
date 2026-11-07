@@ -1,0 +1,12 @@
+# Opens pull requests when GitHub Actions or Python dependencies have new versions.
+# CI then tests each update before you merge it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly

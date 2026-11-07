@@ -3,6 +3,7 @@
 Goal: the server copes with a flaky network and with GitHub's request limits, without hanging, without hammering GitHub, and always with an error message the model can act on.
 
 New tool:
+
 - `get_rate_limit()`: how many requests are left this hour, and when the budget resets.
 
 Changed files: `github_client.py` (retry loop in `_get_response`, `_rate_limit_wait`, clearer messages), `models.py` (`RateLimitStatus`), `server.py` (new tool, updated instructions), `tests/conftest.py` (fake sleep), `tests/test_errors_and_retries.py` (9 new tests, 30 in total).
@@ -37,6 +38,7 @@ delay = random.uniform(0, BASE_DELAY_S * 2 ** (attempt - 1))
 ## 3. Rate limits
 
 GitHub limits how many requests you can make:
+
 - **Primary limit**: 60 requests/hour without a token, 5,000 with one. Every response tells you where you stand in headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` (a Unix timestamp).
 - **Secondary limits**: protection against bursts (too many requests too fast, or too many searches). GitHub replies `403` or `429`, usually with `Retry-After: <seconds>`.
 
@@ -52,6 +54,7 @@ otherwise:                                → None  (a plain 403 is a permission
 ```
 
 Then in `_get_response`:
+
 - Wait is **10 s or less** (`MAX_WAIT_S`) → sleep that long and try again.
 - Wait is **longer** → stop and return a message: *"GitHub rate limit reached. It resets in about 30 minute(s). Retrying now will not help; tell the user and try again later."* Without a token it adds: *"Adding a GITHUB_TOKEN raises the limit from 60 to 5,000 requests/hour."*
 
@@ -134,6 +137,7 @@ uv run mcp dev src/github_mcp/server.py
 ```
 
 Expected: `30 passed`. In the Inspector:
+
 - `get_rate_limit`. With your token, `limit` should be `5000`. Run another tool, then `get_rate_limit` again: `used` goes up by one (or more for multi-page lists).
 - Retries are hard to trigger for real (GitHub is rarely down), which is exactly why the tests simulate them.
 

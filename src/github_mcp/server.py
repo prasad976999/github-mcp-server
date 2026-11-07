@@ -240,7 +240,8 @@ async def get_file_contents(
     # GitHub only inlines files up to 1 MB; bigger ones come back with encoding "none".
     if data.get("encoding") != "base64":
         raise ToolError(
-            f"'{path}' is {data['size']:,} bytes, too large to read through the GitHub API (1 MB limit)."
+            f"'{path}' is {data['size']:,} bytes, too large to read through the GitHub API "
+            "(1 MB limit)."
         )
 
     raw = base64.b64decode(data["content"])

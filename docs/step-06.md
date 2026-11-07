@@ -3,6 +3,7 @@
 Goal: use all three MCP server primitives (tools, resources and prompts), and add the first tool that **changes** GitHub, with the safety measures a write deserves.
 
 New:
+
 - Tool `create_issue(owner, repo, title, body=None, labels=None)`: off by default.
 - Resource template `github://repos/{owner}/{repo}/readme`
 - Prompt `summarize_repository(owner, repo)`
@@ -179,6 +180,7 @@ Interview line: *"Retries are only safe for idempotent requests. For non-idempot
 | `test_create_issue_rejects_an_empty_title` | `title=""` is rejected by the schema | Input validation before any request |
 
 New testing techniques:
+
 - **`monkeypatch.setattr(server.settings, "allow_writes", True)`** flips the switch for one test only; pytest restores it afterwards.
 - **`route.calls.last.request.content`** is the raw body httpx sent; `json.loads` turns it back into a dict to compare.
 - **`pytest.raises(MCPError, match="Not found")`**: resources and prompts fail by raising, unlike tools, which return `is_error`.
@@ -191,6 +193,7 @@ uv run mcp dev src/github_mcp/server.py
 ```
 
 Expected: `43 passed`. In the Inspector:
+
 - **Resources** tab → **List Templates** → `readme`. Fill in owner `modelcontextprotocol`, repo `python-sdk` and read it. You get the README as text.
 - **Prompts** tab → `summarize_repository` with the same owner and repo. You see the message that would go to Claude.
 - **Prompts** tab → `review_pull_request`, same repo, with the number of a recent PR (from `list_pull_requests`). You see the description and diffs loaded in.
