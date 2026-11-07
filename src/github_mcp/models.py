@@ -169,3 +169,19 @@ class RateLimitStatus(BaseModel):
             resets_at=datetime.fromtimestamp(core["reset"], UTC),
             search_remaining=data["resources"]["search"]["remaining"],
         )
+
+
+class CreatedIssue(BaseModel):
+    repository: str
+    number: int
+    title: str
+    url: str
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any], repository: str) -> "CreatedIssue":
+        return cls(
+            repository=repository,
+            number=data["number"],
+            title=data["title"],
+            url=data["html_url"],
+        )

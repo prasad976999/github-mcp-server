@@ -61,7 +61,13 @@ class GitHubClient:
         self._authenticated = settings.github_token is not None
 
     async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        response = await self._get_response(path, params)
+        response = await self._request("GET", path, params=params)
+        return response.json()
+
+    async def post(self, path: str, json: dict[str, Any]) -> Any:
+        """Send a POST (it creates something on GitHub). Never retried after a network
+        error or 5xx, because the first attempt may already have succeeded."""
+        response = await self._request("POST", path, json=json)
         return response.json()
 
     async def get_paginated(
@@ -82,7 +88,7 @@ class GitHubClient:
         items: list[dict[str, Any]] = []
 
         for _ in range(MAX_PAGES):
-            response = await self._get_response(url, query)
+            response = await self._request("GET", url, params=query)
             items.extend(item for item in response.json() if keep(item))
             url = response.links.get("next", {}).get("url")
             # Our token is sent with every request, so only follow links back to GitHub.
@@ -96,16 +102,25 @@ class GitHubClient:
         has_more = len(items) > max_items or url is not None
         return items[:max_items], has_more
 
-    async def _get_response(self, url: str, params: dict[str, Any] | None) -> httpx.Response:
-        """GET with retries. Returns a successful response or raises GitHubAPIError.
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+    ) -> httpx.Response:
+        """Send a request with retries. Returns a successful response or raises GitHubAPIError.
 
-        Retried: timeouts, network errors and 5xx (GET is idempotent, so a repeat is safe).
+        Retried: timeouts, network errors and 5xx, but only for GET, which is idempotent.
         Rate limits: wait if GitHub asks for a short pause, otherwise explain and stop.
+        (A rate-limited request was rejected, so repeating it is safe for any method.)
         Not retried: other 4xx errors, because the same request would fail the same way.
         """
+        idempotent = method == "GET"
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
-                response = await self._http.get(url, params=params)
+                response = await self._http.request(method, url, params=params, json=json)
             except httpx.TimeoutException as exc:
                 error = GitHubAPIError(504, f"GitHub did not respond in time ({url}).")
                 error.__cause__ = exc
@@ -127,6 +142,15 @@ class GitHubClient:
                 error = GitHubAPIError(response.status_code, _error_message(response))
                 if response.status_code not in RETRYABLE_STATUS:
                     raise error
+
+            if not idempotent:
+                # The request may have reached GitHub before the failure; a repeat could
+                # create a duplicate. Let the caller (the model) check and decide.
+                raise GitHubAPIError(
+                    error.status_code,
+                    f"{error} The {method} was not retried because it may already have "
+                    "succeeded. Check before trying again.",
+                ) from error.__cause__
 
             if attempt == MAX_ATTEMPTS:
                 raise GitHubAPIError(
@@ -185,6 +209,7 @@ def _error_message(response: httpx.Response) -> str:
         401: "The GitHub token is missing, invalid or expired.",
         403: "Access denied. The token may not have permission for this.",
         404: "Not found. Check the owner and repository names, or the token may lack access.",
+        410: "This feature is turned off for the repository (for example, issues are disabled).",
         422: "GitHub rejected the request parameters.",
         500: "GitHub had an internal error.",
         502: "GitHub is temporarily unavailable.",

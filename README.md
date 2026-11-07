@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server, written with the official Python MCP SDK, that lets AI assistants (Claude Desktop, Claude Code, any MCP client) explore and work with GitHub: search repositories, read code, triage issues and review pull requests.
 
-> Status: step 5 of 8 (retries, backoff and rate limits). See [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: step 6 of 8 (resources, prompts and a guarded write tool). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Architecture
 
@@ -28,21 +28,21 @@ Layers, each with one job:
 | Models | `models.py` | Pydantic models that trim GitHub's huge JSON down to what an LLM needs (saves tokens, gives typed structured output). |
 | Config | `config.py` | Reads `GITHUB_TOKEN` etc. from the environment. |
 
-## Features (planned)
+## Features
 
 **Tools** (actions the model can call)
-- `search_repositories`, `get_repository`, `get_file_contents`, `list_directory`
-- `list_issues`, `get_issue`, `create_issue` (write, marked destructive-safe via tool annotations)
-- `list_pull_requests`, `get_pull_request_diff`
+- `search_repositories`, `get_repository`
+- `list_directory`, `get_file_contents`
+- `list_issues`, `list_pull_requests` (newest first, safe pagination)
+- `create_issue` (write tool: off unless `GITHUB_ALLOW_WRITES=true`, annotated as non-read-only)
 - `server_status`, `get_rate_limit`
 
 **Resources** (read-only data addressed by URI)
 - `github://repos/{owner}/{repo}/readme`
-- `github://user/me`
 
 **Prompts** (reusable templates the user picks)
-- `review_pull_request(owner, repo, number)`
 - `summarize_repository(owner, repo)`
+- `review_pull_request(owner, repo, number)` (loads the PR description and diffs for you)
 
 **Engineering**
 - Async I/O with a single pooled `httpx.AsyncClient`, created in the server lifespan

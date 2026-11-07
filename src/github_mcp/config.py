@@ -14,6 +14,8 @@ class Settings(BaseModel):
     github_token: SecretStr | None = None
     github_api_url: str = "https://api.github.com"
     request_timeout_s: float = Field(default=15.0, gt=0)
+    # Write tools (create_issue) refuse to run unless this is switched on explicitly.
+    allow_writes: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -23,4 +25,5 @@ class Settings(BaseModel):
             github_token=os.environ.get("GITHUB_TOKEN") or None,
             github_api_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
             request_timeout_s=float(os.environ.get("GITHUB_TIMEOUT_S", "15")),
+            allow_writes=os.environ.get("GITHUB_ALLOW_WRITES", "").lower() in {"1", "true", "yes"},
         )

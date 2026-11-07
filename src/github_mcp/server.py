@@ -10,14 +10,16 @@ from typing import Annotated, Literal
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context, MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
+from mcp.shared.exceptions import MCPError
+from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, ToolAnnotations
 from pydantic import BaseModel, Field
 
 from github_mcp import __version__
 from github_mcp.config import Settings
 from github_mcp.github_client import GitHubAPIError, GitHubClient
 from github_mcp.models import (
+    CreatedIssue,
     DirectoryEntry,
     DirectoryListing,
     FileContents,
@@ -64,7 +66,11 @@ mcp = MCPServer(
         "list_issues and list_pull_requests return the most recent first; has_more=true "
         "means there are more than you were given. "
         "If a tool reports a rate limit, call get_rate_limit and tell the user when it resets "
-        "instead of retrying."
+        "instead of retrying. "
+        "A repository's README is also available as the resource "
+        "github://repos/{owner}/{repo}/readme. "
+        "create_issue changes GitHub: only call it when the user has asked for an issue to be "
+        "created, and show them the title and body first."
     ),
     lifespan=lifespan,
 )
@@ -95,6 +101,7 @@ class ServerStatus(BaseModel):
     version: str
     github_api_url: str
     authenticated: bool
+    writes_enabled: bool
 
 
 @mcp.tool()
@@ -104,6 +111,7 @@ def server_status() -> ServerStatus:
         version=__version__,
         github_api_url=settings.github_api_url,
         authenticated=settings.github_token is not None,
+        writes_enabled=settings.allow_writes,
     )
 
 
@@ -306,6 +314,139 @@ async def list_pull_requests(
         has_more=has_more,
         items=[PullRequestSummary.from_api(item) for item in items],
     )
+
+
+# ---------------------------------------------------------------------------
+# Step 6: a write tool, a resource and prompts
+# ---------------------------------------------------------------------------
+
+# Hints for hosts: this tool changes things (not read-only), but only adds, never
+# deletes or overwrites (not destructive), and calling it twice makes two issues
+# (not idempotent). Hosts typically ask the user to approve such calls.
+CREATES_DATA = ToolAnnotations(
+    read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+)
+
+
+@mcp.tool(annotations=CREATES_DATA)
+async def create_issue(
+    owner: Owner,
+    repo: Repo,
+    title: Annotated[str, Field(min_length=1, max_length=256, description="Issue title")],
+    ctx: Context,
+    body: Annotated[str | None, Field(description="Issue description in Markdown")] = None,
+    labels: Annotated[
+        list[str] | None, Field(description="Existing label names to apply, e.g. ['bug']")
+    ] = None,
+) -> CreatedIssue:
+    """Create a new issue in a GitHub repository. This changes GitHub and is visible to
+    everyone who can see the repository. Only use it when the user asked for an issue;
+    confirm the title and body with them first."""
+    if not settings.allow_writes:
+        raise ToolError(
+            "Creating issues is turned off on this server. To allow it, set "
+            "GITHUB_ALLOW_WRITES=true and use a token with Issues write permission."
+        )
+    payload: dict[str, object] = {"title": title}
+    if body:
+        payload["body"] = body
+    if labels:
+        payload["labels"] = labels
+    try:
+        data = await _github(ctx).post(f"/repos/{owner}/{repo}/issues", json=payload)
+    except GitHubAPIError as exc:
+        raise ToolError(str(exc)) from exc
+    logger.info("Created issue %s/%s#%s", owner, repo, data.get("number"))
+    return CreatedIssue.from_api(data, repository=f"{owner}/{repo}")
+
+
+@mcp.resource(
+    "github://repos/{owner}/{repo}/readme",
+    name="readme",
+    title="Repository README",
+    description="The README of a GitHub repository, as text.",
+    mime_type="text/markdown",
+)
+async def readme(owner: str, repo: str, ctx: Context) -> str:
+    try:
+        data = await _github(ctx).get(f"/repos/{owner}/{repo}/readme")
+    except GitHubAPIError as exc:
+        raise ResourceError(str(exc)) from exc
+    text = _decode_text(base64.b64decode(data.get("content", "")))
+    if text is None:
+        raise ResourceError(f"The README of {owner}/{repo} is not a text file.")
+    return text
+
+
+@mcp.prompt(title="Summarise a repository")
+def summarize_repository(owner: str, repo: str) -> str:
+    """Get a short overview of a repository: what it does, how it's built, how healthy it is."""
+    return (
+        f"Give me an overview of the GitHub repository {owner}/{repo} for someone deciding "
+        "whether to use it or contribute to it.\n\n"
+        f"Use get_repository for the facts, read the README (resource "
+        f"github://repos/{owner}/{repo}/readme, or get_file_contents on README.md), "
+        "list_directory to see how the code is organised, and list_issues for current "
+        "problems.\n\n"
+        "Cover: what it does and who it's for, the tech stack, how the code is organised, "
+        "how active and healthy the project looks, and how to get started. "
+        "Keep it under 300 words."
+    )
+
+
+# Upper bound on diff text put into the review prompt, so a huge PR can't flood the context.
+MAX_DIFF_CHARS = 40_000
+
+
+@mcp.prompt(title="Review a pull request")
+async def review_pull_request(owner: str, repo: str, number: int, ctx: Context) -> str:
+    """Review a pull request. The PR's description and changed lines are loaded for you."""
+    github = _github(ctx)
+    try:
+        pr = await github.get(f"/repos/{owner}/{repo}/pulls/{number}")
+        files, more_files = await github.get_paginated(
+            f"/repos/{owner}/{repo}/pulls/{number}/files", max_items=100
+        )
+    except GitHubAPIError as exc:
+        # Prompts have no "isError" result like tools, so failures travel as a protocol
+        # error. MCPError keeps our readable message (any other exception is hidden as
+        # "Internal server error").
+        code = INVALID_PARAMS if exc.status_code < 500 else INTERNAL_ERROR
+        raise MCPError(code, str(exc)) from exc
+
+    author = (pr.get("user") or {}).get("login")
+    intro = (
+        f'Please review pull request #{number} in {owner}/{repo}: "{pr["title"]}" by '
+        f"{author}, merging {pr['head']['ref']} into {pr['base']['ref']}."
+    )
+    parts = [
+        intro,
+        f"Description:\n{pr.get('body') or '(no description)'}",
+        f"Changed files ({len(files)}{'+' if more_files else ''}):",
+    ]
+    budget = MAX_DIFF_CHARS
+    skipped = 0
+    for f in files:
+        header = f"### {f['filename']} ({f['status']}, +{f['additions']} -{f['deletions']})"
+        patch = f.get("patch") or "(no text diff: binary or very large file)"
+        if len(patch) > budget:
+            skipped += 1
+            parts.append(f"{header}\n(diff left out to keep this prompt short)")
+            continue
+        budget -= len(patch)
+        parts.append(f"{header}\n```diff\n{patch}\n```")
+    if skipped:
+        parts.append(
+            f"{skipped} diff(s) were left out. Use get_file_contents with "
+            f"ref={pr['head']['sha']} to read those files."
+        )
+    parts.append(
+        "Review for correctness bugs, security problems, missing tests and readability. "
+        "Name the file and line for each point. To see more context, use get_file_contents "
+        f"with ref={pr['head']['sha']}. End with a verdict: approve, request changes, or "
+        "comment."
+    )
+    return "\n\n".join(parts)
 
 
 def _decode_text(raw: bytes) -> str | None:

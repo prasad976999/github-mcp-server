@@ -1,6 +1,6 @@
 ---
 title: "GitHub MCP Server — Study Guide"
-subtitle: "Everything built in steps 1–5: concepts, code walkthrough, commands and interview answers"
+subtitle: "Everything built in steps 1–6: concepts, code walkthrough, commands and interview answers"
 ---
 
 # How to use this guide
@@ -14,7 +14,7 @@ Suggested study order:
 3. Work through **Part 4** (code walkthrough) with the real files open in VS Code.
 4. Test yourself with **Part 6** (interview questions). Cover the answer, say yours, then compare.
 
-**Progress:** steps 1–5 of 8 complete.
+**Progress:** steps 1–6 of 8 complete.
 
 | Step | What was built | Status |
 |---|---|---|
@@ -22,14 +22,15 @@ Suggested study order:
 | 2 | GitHub client, `search_repositories`, `get_repository`, error handling | Done, verified live, committed |
 | 3 | `list_directory`, `get_file_contents` (reading code) | Done, committed |
 | 4 | `list_issues`, `list_pull_requests`, safe pagination | Done, 21 tests pass on your laptop, committed |
-| 5 | Retries with backoff, rate-limit handling, `get_rate_limit` | Built, 30 tests pass |
-| 6–8 | Resources & prompts, CI, Docker | Coming next |
+| 5 | Retries with backoff, rate-limit handling, `get_rate_limit` | Done, 30 tests pass on your laptop, committed |
+| 6 | README resource, two prompts, `create_issue` (off by default) | Built, 43 tests pass |
+| 7–8 | CI with GitHub Actions, Docker and HTTP transport | Coming next |
 
 # Part 1. Your project in one minute
 
 ## The 30-second pitch
 
-> "I built an MCP server in Python that gives AI assistants like Claude safe, structured access to GitHub. It can search repositories, fetch details, browse folders, read source files, and list issues and pull requests. I used the official MCP Python SDK, an async httpx client for the GitHub REST API, and Pydantic models to keep outputs small and typed. I focused on tool design: clear names and descriptions, input validation, error messages the model can act on, and guards so large files or long lists never flood the model's context. It retries temporary failures with exponential backoff and handles GitHub's rate limits without hanging. It's covered by tests that mock GitHub, so they run offline in about a second."
+> "I built an MCP server in Python that gives AI assistants like Claude safe, structured access to GitHub. It can search repositories, fetch details, browse folders, read source files, and list issues and pull requests. It uses all three MCP primitives: tools, a README resource, and prompts for summarising a repository and reviewing a pull request. I used the official MCP Python SDK, an async httpx client for the GitHub REST API, and Pydantic models to keep outputs small and typed. I focused on tool design: clear names and descriptions, input validation, error messages the model can act on, and guards so large files or long lists never flood the model's context. It retries temporary failures with exponential backoff and handles GitHub's rate limits without hanging. Its one write tool, `create_issue`, is off by default, marked as non-read-only so hosts ask the user first, and never retried blindly. It's covered by tests that mock GitHub, so they run offline in about a second."
 
 ## The 2-minute walkthrough
 
@@ -37,8 +38,8 @@ When an interviewer says *"walk me through your project"*:
 
 1. **What MCP is.** An open protocol that standardises how AI applications connect to tools and data. You wrap a service once as an MCP server, and any MCP host can use it.
 2. **Architecture.** The host (Claude Desktop or Claude Code) launches my server as a subprocess and talks JSON-RPC over stdin/stdout. My server has three layers: the MCP layer (`server.py`) defines the tools, the API layer (`github_client.py`) does HTTP, and the models layer (`models.py`) shapes what the model sees.
-3. **Tools.** `search_repositories`, `get_repository`, `list_directory`, `get_file_contents`, `list_issues`, `list_pull_requests`, `get_rate_limit`, and `server_status`.
-4. **Engineering decisions.** One shared async HTTP client created in the server's lifespan; outputs trimmed from ~100 fields to ~13; pagination that follows GitHub's `Link` headers with a 5-page cap; files cut off at a limit with an explicit `truncated` flag; network errors and 5xx retried with exponential backoff and jitter, rate limits waited out only when the wait is short; every failure turned into a readable tool error; a fine-grained read-only token loaded from the environment.
+3. **Tools.** `search_repositories`, `get_repository`, `list_directory`, `get_file_contents`, `list_issues`, `list_pull_requests`, `get_rate_limit`, `server_status`, and the write tool `create_issue`. Plus a **resource** (`github://repos/{owner}/{repo}/readme`) and two **prompts** (`summarize_repository`, `review_pull_request`).
+4. **Engineering decisions.** One shared async HTTP client created in the server's lifespan; outputs trimmed from ~100 fields to ~13; pagination that follows GitHub's `Link` headers with a 5-page cap; files cut off at a limit with an explicit `truncated` flag; network errors and 5xx retried with exponential backoff and jitter, rate limits waited out only when the wait is short; writes off by default and never retried after a 5xx; every failure turned into a readable tool error; a fine-grained read-only token loaded from the environment.
 5. **Testing.** `pytest` with `respx` to fake GitHub (including 404s, timeouts, server errors, rate limits, binary and oversized files), calling tools through the SDK's in-process client exactly as a real host would.
 
 # Part 2. Core concepts
@@ -60,8 +61,8 @@ Before MCP, every AI app needed its own custom integration for every service: N 
 | Primitive | Who controls it | Example |
 |---|---|---|
 | **Tool** | The **model** decides to call it | `search_repositories` |
-| **Resource** | The **application/user** attaches it as read-only context, addressed by a URI | `github://repos/{owner}/{repo}/readme` (step 6) |
-| **Prompt** | The **user** picks it, like a slash command | `review_pull_request` (step 6) |
+| **Resource** | The **application/user** attaches it as read-only context, addressed by a URI | `github://repos/{owner}/{repo}/readme` |
+| **Prompt** | The **user** picks it, like a slash command | `review_pull_request`, `summarize_repository` |
 
 This is one of the most common MCP interview questions. Memorise: *model-controlled, application-controlled, user-controlled.*
 
@@ -100,6 +101,9 @@ All messages are **JSON-RPC 2.0**: requests with an `id`, `method` and `params`,
 | **Exponential backoff** | Waiting longer after each failed attempt (0.5 s, then 1 s…) so a struggling server isn't flooded |
 | **Jitter** | Randomness added to the wait so many clients don't all retry at the same instant |
 | **Rate limit** | GitHub's cap on requests: 60/hour without a token, 5,000/hour with one |
+| **Resource template** | A resource URI with placeholders, e.g. `github://repos/{owner}/{repo}/readme`, so one definition serves every repository |
+| **Human in the loop** | A person approves an action before it happens; hosts do this for tools not marked read-only |
+| **Least privilege** | Give a credential only the permissions the job needs, e.g. a read-only token |
 | **Fine-grained token** | A GitHub token limited to specific permissions and repositories, with an expiry date |
 
 # Part 3. Architecture
@@ -151,7 +155,8 @@ github-mcp-server/
 │   ├── test_repositories.py# step 2
 │   ├── test_contents.py    # step 3
 │   ├── test_issues_and_prs.py # step 4
-│   └── test_errors_and_retries.py # step 5
+│   ├── test_errors_and_retries.py # step 5
+│   └── test_resources_prompts_and_writes.py # step 6
 └── docs/                   # roadmap, step explainers, this guide
 ```
 
@@ -246,6 +251,8 @@ class Settings(BaseModel):
     github_token: SecretStr | None = None
     github_api_url: str = "https://api.github.com"
     request_timeout_s: float = Field(default=15.0, gt=0)
+    # Write tools (create_issue) refuse to run unless this is switched on explicitly.
+    allow_writes: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -255,6 +262,7 @@ class Settings(BaseModel):
             github_token=os.environ.get("GITHUB_TOKEN") or None,
             github_api_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
             request_timeout_s=float(os.environ.get("GITHUB_TIMEOUT_S", "15")),
+            allow_writes=os.environ.get("GITHUB_ALLOW_WRITES", "").lower() in {"1", "true", "yes"},
         )
 ```
 
@@ -265,6 +273,7 @@ class Settings(BaseModel):
 - **`@classmethod from_env`**: a constructor that builds `Settings` from the environment. Keeping this in one place means the rest of the code never touches `os.environ`.
 - **`load_dotenv(override=False)`**: copies values from `.env` into the environment, **but doesn't overwrite variables that are already set**. In production, Claude Desktop passes `GITHUB_TOKEN` in its config, and that wins over any local file.
 - **`os.environ.get("GITHUB_TOKEN") or None`**: turns an empty string into `None`, so an empty `GITHUB_TOKEN=` line counts as "no token".
+- **`allow_writes` (step 6)**: `False` unless `GITHUB_ALLOW_WRITES` is `1`, `true` or `yes`. A server that can change things should need a **deliberate opt-in**; anything else (unset, a typo) means off.
 
 **Why environment variables?** That's how MCP hosts pass secrets to servers (`env` in the host config). Never hard-code a token and never commit `.env`.
 
@@ -320,7 +329,14 @@ class GitHubClient:
 
 ```python
 async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-    response = await self._get_response(path, params)
+    response = await self._request("GET", path, params=params)
+    return response.json()
+
+
+async def post(self, path: str, json: dict[str, Any]) -> Any:
+    """Send a POST (it creates something on GitHub). Never retried after a network
+    error or 5xx, because the first attempt may already have succeeded."""
+    response = await self._request("POST", path, json=json)
     return response.json()
 
 
@@ -329,7 +345,8 @@ async def aclose(self) -> None:
 ```
 
 - **`get()`** is for single objects (one repository, one file). It returns parsed JSON.
-- **`_get_response()`** does the actual request, the retries and all the error handling, and returns the full response (so pagination can read its headers). Both `get()` and `get_paginated()` use it, so **error handling lives in exactly one place**. It is explained in full in *Retries and rate limits (step 5)* below.
+- **`post()` (step 6)** sends a JSON body to create something. Only `create_issue` uses it.
+- **`_request()`** does the actual request, the retries and all the error handling, and returns the full response (so pagination can read its headers). `get()`, `post()` and `get_paginated()` all use it, so **error handling lives in exactly one place**. It is explained in full in *Retries and rate limits (step 5)* below.
 - **`async def` / `await`**: while waiting for GitHub, Python can serve other requests. Network calls are **I/O-bound** (mostly waiting), which is exactly where async helps.
 - **`params=params`**: httpx turns a dict like `{"q": "mcp", "per_page": 5}` into `?q=mcp&per_page=5`, URL-encoding it safely.
 - **`aclose()`**: closes the pooled connections. The server calls it at shutdown.
@@ -359,7 +376,7 @@ MAX_PAGES = 5
         items: list[dict[str, Any]] = []
 
         for _ in range(MAX_PAGES):
-            response = await self._get_response(url, query)
+            response = await self._request("GET", url, params=query)
             items.extend(item for item in response.json() if keep(item))
             url = response.links.get("next", {}).get("url")
             # Our token is sent with every request, so only follow links back to GitHub.
@@ -412,19 +429,27 @@ _sleep = asyncio.sleep
 
 | Failure | Retry? | Why |
 |---|---|---|
-| Timeout or network error | Yes | Usually temporary |
-| 500, 502, 503, 504 | Yes | GitHub's problem, often gone in a second |
+| Timeout or network error | Yes (GET only) | Usually temporary |
+| 500, 502, 503, 504 | Yes (GET only) | GitHub's problem, often gone in a second |
 | Rate limit with a short wait (≤ 10 s) | Wait, then yes | GitHub said when it's OK |
 | Rate limit with a long wait | No, report it | A tool call must not hang for 30 minutes |
 | Other 4xx (404, 401, 422, plain 403) | No | Same request, same failure; the model must change its input |
 
-**Idempotency** makes retrying safe: every call here is a `GET`, and doing a GET twice changes nothing. A `POST` such as `create_issue` (step 6) must not be retried blindly, because a lost response could mean the issue was created and a retry would make a duplicate.
+**Idempotency** makes retrying safe: every read here is a `GET`, and doing a GET twice changes nothing. A `POST` such as `create_issue` must not be retried blindly, because a lost response could mean the issue was created and a retry would make a duplicate. Since step 6 the loop enforces this (see below). Some APIs (Stripe, for example) accept an **idempotency key** that makes retried POSTs safe; GitHub's issues API doesn't.
 
 ```python
-async def _get_response(self, url: str, params: dict[str, Any] | None) -> httpx.Response:
+async def _request(
+    self,
+    method: str,
+    url: str,
+    *,
+    params: dict[str, Any] | None = None,
+    json: dict[str, Any] | None = None,
+) -> httpx.Response:
+    idempotent = method == "GET"
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            response = await self._http.get(url, params=params)
+            response = await self._http.request(method, url, params=params, json=json)
         except httpx.TimeoutException as exc:
             error = GitHubAPIError(504, f"GitHub did not respond in time ({url}).")
             error.__cause__ = exc
@@ -447,6 +472,15 @@ async def _get_response(self, url: str, params: dict[str, Any] | None) -> httpx.
             if response.status_code not in RETRYABLE_STATUS:
                 raise error
 
+        if not idempotent:
+            # The request may have reached GitHub before the failure; a repeat could
+            # create a duplicate. Let the caller (the model) check and decide.
+            raise GitHubAPIError(
+                error.status_code,
+                f"{error} The {method} was not retried because it may already have "
+                "succeeded. Check before trying again.",
+            ) from error.__cause__
+
         if attempt == MAX_ATTEMPTS:
             raise GitHubAPIError(
                 error.status_code, f"{error} Gave up after {MAX_ATTEMPTS} attempts."
@@ -459,6 +493,8 @@ async def _get_response(self, url: str, params: dict[str, Any] | None) -> httpx.
     raise AssertionError("unreachable")  # the loop always returns or raises
 ```
 
+- **`method`, `json` (step 6)**: one loop serves GET and POST. `self._http.request(method, ...)` sends either; `json=` makes httpx send a JSON body with the right `Content-Type`.
+- **`idempotent = method == "GET"`**: only GETs may be repeated after a timeout or 5xx.
 - **`for attempt in range(1, MAX_ATTEMPTS + 1)`**: a bounded loop, attempts 1, 2 and 3.
 - **`try / except / else`**: `except` handles "no response at all" (network, timeout); `else` runs only when a response arrived.
 - **Order of `except` matters**: `TimeoutException` is a kind of `HTTPError`, so it must be caught first to get the more specific message.
@@ -467,6 +503,7 @@ async def _get_response(self, url: str, params: dict[str, Any] | None) -> httpx.
 - **`response.is_success`**: true for any 2xx status; return straight away.
 - **Rate limit branch**: a short wait is slept out and the loop `continue`s to the next attempt; a long wait (or no attempts left) raises a message with the reset time instead.
 - **`if response.status_code not in RETRYABLE_STATUS: raise error`**: other 4xx errors fail immediately. No wasted requests.
+- **`if not idempotent: raise ...` (step 6)**: a POST that hit a timeout or 5xx is **not** retried, because GitHub may have created the issue before the error and a retry would make a duplicate. The message tells the model to check first (e.g. with `list_issues`). Rate-limit waits still apply to POST: a 429 means GitHub rejected it, so nothing was created.
 - **"Gave up after 3 attempts"**: tells the model the server already retried, so retrying again itself is pointless.
 - **`random.uniform(0, 0.5 * 2 ** (attempt - 1))`**: **exponential backoff with full jitter**. The ceiling doubles (0.5 s, 1 s) so a struggling GitHub isn't hammered; the random pick spreads out many clients that failed at the same time (avoiding a "thundering herd").
 - **`logger.warning`**: goes to stderr, so retries show in the Inspector's server log without breaking stdio.
@@ -530,6 +567,7 @@ def _error_message(response: httpx.Response) -> str:
         401: "The GitHub token is missing, invalid or expired.",
         403: "Access denied. The token may not have permission for this.",
         404: "Not found. Check the owner and repository names, or the token may lack access.",
+        410: "This feature is turned off for the repository (for example, issues are disabled).",
         422: "GitHub rejected the request parameters.",
         500: "GitHub had an internal error.",
         502: "GitHub is temporarily unavailable.",
@@ -705,6 +743,8 @@ class RateLimitStatus(BaseModel):
 - **`core`** is the main REST budget; **`search`** is separate (30 requests per minute), so both are reported.
 - **`datetime.fromtimestamp(..., UTC)`**: GitHub sends the reset as a Unix timestamp (seconds since 1970); converting it gives the model a readable date-time with an explicit time zone.
 
+Step 6 added `CreatedIssue` (repository, number, title, url) for the result of `create_issue`: just enough for the model to tell the user "created #42" with a link.
+
 ## 4.5 `server.py`: the MCP layer
 
 ### Logging and settings
@@ -758,7 +798,11 @@ mcp = MCPServer(
         "list_issues and list_pull_requests return the most recent first; has_more=true "
         "means there are more than you were given. "
         "If a tool reports a rate limit, call get_rate_limit and tell the user when it resets "
-        "instead of retrying."
+        "instead of retrying. "
+        "A repository's README is also available as the resource "
+        "github://repos/{owner}/{repo}/readme. "
+        "create_issue changes GitHub: only call it when the user has asked for an issue to be "
+        "created, and show them the title and body first."
     ),
     lifespan=lifespan,
 )
@@ -771,7 +815,7 @@ def _github(ctx: Context) -> GitHubClient:
 ```
 
 - **`MCPServer`**: the high-level server class in **MCP Python SDK v2**. In v1 it was called `FastMCP`. Most tutorials online still show v1, so mentioning that you used the current v2 API is a good detail.
-- **`instructions`**: sent to the host during `initialize`. It's guidance that spans several tools: *the workflow*, search then get, list then read, and (since step 5) what to do about a rate limit.
+- **`instructions`**: sent to the host during `initialize`. It's guidance that spans several tools: *the workflow*, search then get, list then read, what to do about a rate limit (step 5), and (step 6) the README resource and the rule to confirm with the user before `create_issue`.
 - **`ToolAnnotations(read_only_hint=True, open_world_hint=True)`**: tells hosts these tools don't change anything and talk to an external system. Hosts can skip confirmation prompts for read-only tools. These are **hints, not security**.
 - **`_github(ctx)`**: a small helper that fetches the shared client from the lifespan context. This is **dependency injection**: tools receive the client and don't create it.
 
@@ -799,6 +843,7 @@ class ServerStatus(BaseModel):
     version: str
     github_api_url: str
     authenticated: bool
+    writes_enabled: bool
 
 
 @mcp.tool()
@@ -808,6 +853,7 @@ def server_status() -> ServerStatus:
         version=__version__,
         github_api_url=settings.github_api_url,
         authenticated=settings.github_token is not None,
+        writes_enabled=settings.allow_writes,
     )
 ```
 
@@ -817,7 +863,7 @@ def server_status() -> ServerStatus:
   - the **type hints** → input JSON Schema,
   - the **return type** → output JSON Schema.
 - **Key insight: the docstring and parameter descriptions are the prompt.** They're how the model knows what the tool does.
-- Reports `authenticated` as a boolean, **never the token**.
+- Reports `authenticated` as a boolean, **never the token**. Since step 6 it also reports `writes_enabled`.
 
 ### Tool 1b: `get_rate_limit` (step 5)
 
@@ -1122,6 +1168,174 @@ async def list_pull_requests(
 - The same pattern as `list_issues` on the `/pulls` endpoint. Reusing `get_paginated` means paging, the page cap, the host check and error handling all come for free.
 - The **server `instructions`** were also updated to say these tools return newest first and what `has_more` means.
 
+### Tool 8: `create_issue` (step 6, the write tool)
+
+```python
+CREATES_DATA = ToolAnnotations(
+    read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+)
+
+
+@mcp.tool(annotations=CREATES_DATA)
+async def create_issue(
+    owner: Owner,
+    repo: Repo,
+    title: Annotated[str, Field(min_length=1, max_length=256, description="Issue title")],
+    ctx: Context,
+    body: Annotated[str | None, Field(description="Issue description in Markdown")] = None,
+    labels: Annotated[
+        list[str] | None, Field(description="Existing label names to apply, e.g. ['bug']")
+    ] = None,
+) -> CreatedIssue:
+    """Create a new issue in a GitHub repository. This changes GitHub and is visible to
+    everyone who can see the repository. Only use it when the user asked for an issue;
+    confirm the title and body with them first."""
+    if not settings.allow_writes:
+        raise ToolError(
+            "Creating issues is turned off on this server. To allow it, set "
+            "GITHUB_ALLOW_WRITES=true and use a token with Issues write permission."
+        )
+    payload: dict[str, object] = {"title": title}
+    if body:
+        payload["body"] = body
+    if labels:
+        payload["labels"] = labels
+    try:
+        data = await _github(ctx).post(f"/repos/{owner}/{repo}/issues", json=payload)
+    except GitHubAPIError as exc:
+        raise ToolError(str(exc)) from exc
+    logger.info("Created issue %s/%s#%s", owner, repo, data.get("number"))
+    return CreatedIssue.from_api(data, repository=f"{owner}/{repo}")
+```
+
+Five layers of safety, outermost first:
+
+1. **Least-privilege token**: yours is read-only, so GitHub itself would refuse a write (403). Writing needs a separate token with *Issues: Read and write* on chosen repositories.
+2. **Off by default**: `settings.allow_writes` must be switched on with `GITHUB_ALLOW_WRITES=true`. The check runs before any request.
+3. **Annotations**: `read_only_hint=False` (it changes things), `destructive_hint=False` (it only adds, never deletes or overwrites), `idempotent_hint=False` (two calls make two issues). Hosts like Claude Desktop use this to **ask the user to approve** each call: *human in the loop*. **Annotations are hints, not security**, which is why layers 1 and 2 exist.
+4. **Docstring and server instructions**: only when the user asked, and confirm the title and body first.
+5. **No blind retries**: `post()` never retries after a timeout or 5xx (see *Retries and rate limits*).
+
+Details:
+
+- **`Field(min_length=1, max_length=256)`** becomes JSON Schema rules, so an empty title is rejected before our code runs.
+- **Only send what was given**: `body` and `labels` are added to the payload only when present.
+- **`logger.info`**: writes are worth a log line (an audit trail), on stderr as always.
+
+### Resource: the README (step 6)
+
+```python
+@mcp.resource(
+    "github://repos/{owner}/{repo}/readme",
+    name="readme",
+    title="Repository README",
+    description="The README of a GitHub repository, as text.",
+    mime_type="text/markdown",
+)
+async def readme(owner: str, repo: str, ctx: Context) -> str:
+    try:
+        data = await _github(ctx).get(f"/repos/{owner}/{repo}/readme")
+    except GitHubAPIError as exc:
+        raise ResourceError(str(exc)) from exc
+    text = _decode_text(base64.b64decode(data.get("content", "")))
+    if text is None:
+        raise ResourceError(f"The README of {owner}/{repo} is not a text file.")
+    return text
+```
+
+- **`@mcp.resource(uri)`**: because the URI has `{placeholders}` (RFC 6570 syntax), the SDK registers a **resource template**. Clients find it with `resources/templates/list` and read a concrete URI such as `github://repos/pallets/flask/readme` with `resources/read`. The placeholders must match the function's parameters.
+- **`github://`** is our own scheme; any scheme is allowed.
+- **`/repos/{owner}/{repo}/readme`** finds the README whatever its file name.
+- **`mime_type`** tells the host how to display the text.
+- **`ResourceError`**: resources have no `isError` result; the error travels as a protocol error with our message.
+- Reuses **`_decode_text`** from step 3 (base64, binary check).
+- **Resource or tool?** Both can return the README (`get_file_contents` can too). The resource is for the **user or app** to attach as context; the tool is for the **model** to fetch when it decides to.
+
+### Prompts (step 6)
+
+```python
+@mcp.prompt(title="Summarise a repository")
+def summarize_repository(owner: str, repo: str) -> str:
+    """Get a short overview of a repository: what it does, how it's built, how healthy it is."""
+    return (
+        f"Give me an overview of the GitHub repository {owner}/{repo} for someone deciding "
+        "whether to use it or contribute to it.\n\n"
+        f"Use get_repository for the facts, read the README (resource "
+        f"github://repos/{owner}/{repo}/readme, or get_file_contents on README.md), "
+        "list_directory to see how the code is organised, and list_issues for current "
+        "problems.\n\n"
+        "Cover: what it does and who it's for, the tech stack, how the code is organised, "
+        "how active and healthy the project looks, and how to get started. "
+        "Keep it under 300 words."
+    )
+```
+
+- **`@mcp.prompt()`** registers a prompt; the function's parameters become its **arguments**, and the docstring its description. Hosts show prompts as slash commands or menu items.
+- **Returning a `str`** makes one **user** message, as if the user typed it.
+- This prompt is a **pure template**: it packages a good workflow (which tools to use, what to cover, how long) so every user gets the same quality without writing it themselves.
+
+```python
+MAX_DIFF_CHARS = 40_000
+
+
+@mcp.prompt(title="Review a pull request")
+async def review_pull_request(owner: str, repo: str, number: int, ctx: Context) -> str:
+    """Review a pull request. The PR's description and changed lines are loaded for you."""
+    github = _github(ctx)
+    try:
+        pr = await github.get(f"/repos/{owner}/{repo}/pulls/{number}")
+        files, more_files = await github.get_paginated(
+            f"/repos/{owner}/{repo}/pulls/{number}/files", max_items=100
+        )
+    except GitHubAPIError as exc:
+        code = INVALID_PARAMS if exc.status_code < 500 else INTERNAL_ERROR
+        raise MCPError(code, str(exc)) from exc
+
+    author = (pr.get("user") or {}).get("login")
+    intro = (
+        f'Please review pull request #{number} in {owner}/{repo}: "{pr["title"]}" by '
+        f"{author}, merging {pr['head']['ref']} into {pr['base']['ref']}."
+    )
+    parts = [
+        intro,
+        f"Description:\n{pr.get('body') or '(no description)'}",
+        f"Changed files ({len(files)}{'+' if more_files else ''}):",
+    ]
+    budget = MAX_DIFF_CHARS
+    skipped = 0
+    for f in files:
+        header = f"### {f['filename']} ({f['status']}, +{f['additions']} -{f['deletions']})"
+        patch = f.get("patch") or "(no text diff: binary or very large file)"
+        if len(patch) > budget:
+            skipped += 1
+            parts.append(f"{header}\n(diff left out to keep this prompt short)")
+            continue
+        budget -= len(patch)
+        parts.append(f"{header}\n```diff\n{patch}\n```")
+    if skipped:
+        parts.append(
+            f"{skipped} diff(s) were left out. Use get_file_contents with "
+            f"ref={pr['head']['sha']} to read those files."
+        )
+    parts.append(
+        "Review for correctness bugs, security problems, missing tests and readability. "
+        "Name the file and line for each point. To see more context, use get_file_contents "
+        f"with ref={pr['head']['sha']}. End with a verdict: approve, request changes, or "
+        "comment."
+    )
+    return "\n\n".join(parts)
+```
+
+- **A prompt that does work**: it fetches the PR and the diff of every changed file, so the model starts with full context instead of spending several tool calls first.
+- **`ctx: Context`** works in prompts and resources just like in tools.
+- **`/pulls/{n}/files`** is a list (up to 3,000 files), so it reuses **`get_paginated`** from step 4. `more_files` adds a `+` to the count when there are more than 100.
+- **`number: int`**: prompt arguments always arrive as strings; the SDK converts `"7"` to `7` from the type hint.
+- **The diff budget** (`MAX_DIFF_CHARS`) is the same context guard as `max_chars` in step 3. Diffs that don't fit are left out **and the prompt says so**, pointing to `get_file_contents`, like `truncated` and `has_more`.
+- **`ref={pr['head']['sha']}`**: the exact commit at the tip of the PR, so the model reads the code *as the PR changes it*.
+- **`f.get("patch") or ...`**: GitHub omits `patch` for binary or huge files.
+- **Why `MCPError`?** For prompts, the SDK replaces any other exception with a vague "Internal server error". `MCPError` passes through unchanged, so the user sees "Not found...". `INVALID_PARAMS` (-32602) for 4xx and `INTERNAL_ERROR` (-32603) for 5xx are standard JSON-RPC error codes.
+- **`"\n\n".join(parts)`**: building a list then joining once is cleaner and faster than adding strings in a loop.
+
 ### Entry point
 
 ```python
@@ -1295,6 +1509,46 @@ async def test_server_error_is_retried_then_succeeds(github_api, sleeps):
 
 Same habit as step 4: **removing the "don't retry other 4xx" line makes the 404 and plain-403 tests fail**, so they really guard that rule.
 
+### `test_resources_prompts_and_writes.py`: step 6 tests
+
+```python
+async def test_create_issue_is_never_retried_after_a_server_error(github_api, monkeypatch):
+    monkeypatch.setattr(server.settings, "allow_writes", True)
+    route = github_api.post("/repos/a/b/issues").mock(
+        side_effect=[httpx.Response(502), httpx.Response(201, json={})]
+    )
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("create_issue", ISSUE_ARGS)
+
+    assert result.is_error is True
+    assert route.call_count == 1
+    assert "may already have succeeded" in result.content[0].text
+```
+
+- **`monkeypatch.setattr(server.settings, "allow_writes", True)`** switches writes on for this test only; pytest undoes it afterwards.
+- **`route.calls.last.request.content`** (used in another test) is the raw body httpx sent; `json.loads` turns it back into a dict to compare.
+- **Resources and prompts fail by raising** `MCPError` on the client, so those tests use `pytest.raises(MCPError, match="Not found")`. Tools return `is_error` instead.
+- **`client.list_resource_templates()`, `read_resource(uri)`, `list_prompts()`, `get_prompt(name, args)`** are the client calls a host makes for the other two primitives.
+
+| Test | What it checks | Why it's needed |
+|---|---|---|
+| `test_readme_resource_template_is_listed` | Template URI and `text/markdown` advertised | Clients can only use what they can discover |
+| `test_readme_resource_returns_decoded_text` | A concrete URI returns the decoded README | Resource happy path |
+| `test_missing_readme_is_a_readable_error` | 404 → `MCPError` with "Not found" | Readable errors for resources too |
+| `test_prompts_are_listed_with_their_arguments` | Both prompts and their argument names | What a host shows the user |
+| `test_summarize_repository_prompt_names_the_repo_and_tools` | One user message with the repo, tools and resource URI | The template fills in correctly |
+| `test_review_pull_request_prompt_loads_description_and_diffs` | Title, author, branches, description, file header, diff, head SHA | The prompt really loads context |
+| `test_review_pull_request_prompt_leaves_out_diffs_over_budget` | Budget patched to 50: small diff in, huge one out and counted | The context guard works and is announced |
+| `test_review_pull_request_prompt_for_missing_pr_is_a_readable_error` | "Not found", not "Internal server error" | Proves why `MCPError` is used |
+| `test_create_issue_is_annotated_as_a_non_read_only_tool` | read-only, destructive and idempotent hints all false | Hosts rely on them to ask for approval |
+| `test_create_issue_is_refused_when_writes_are_off` | Clear error, **zero** requests sent | The opt-in switch really blocks writes |
+| `test_create_issue_posts_title_body_and_labels` | Exact JSON body sent, result mapped | Wrong field names would silently drop data |
+| `test_create_issue_is_never_retried_after_a_server_error` | 502 → exactly 1 request, "may already have succeeded" | Prevents duplicate issues |
+| `test_create_issue_rejects_an_empty_title` | `title=""` rejected by the schema | Validation before any request |
+
+Both safety tests were proven by breaking the code: **removing the `allow_writes` check, or treating POST as idempotent, makes them fail.**
+
 ## 4.7 Why test this way
 
 - **Every test goes through the real MCP path** (`Client` → `tools/call` → our function), not by calling functions directly. That way the tests also cover tool registration, schemas, validation and error conversion.
@@ -1308,7 +1562,7 @@ Automated tests use a *fake* GitHub. These manual checks proved the server works
 
 | Check | Result you saw | Why we did it |
 |---|---|---|
-| `uv run pytest` on your laptop | 1, then 6, then 13, then 21 passed | Proves the code runs on Windows with your Python, not just in my environment |
+| `uv run pytest` on your laptop | 1, then 6, then 13, then 21, then 30 passed | Proves the code runs on Windows with your Python, not just in my environment |
 | Inspector → `server_status` | `version 0.1.0`, `authenticated: false`, then `true` after adding `.env` | Confirms the MCP wiring works end to end, then that the token is loaded |
 | Inspector → `search_repositories` `mcp server language:python`, limit 5 | 5 items, `total_count` 70,718 | Real API call with the token; shows the trimming and the limit working |
 | Inspector → `get_repository` `modelcontextprotocol/python-sdk` | 13 fields incl. `license: "MIT"`, topics | Real detail view; checks the field mapping against real data |
@@ -1316,6 +1570,8 @@ Automated tests use a *fake* GitHub. These manual checks proved the server works
 | Inspector → `list_directory` / `get_file_contents` (step 3, in progress) | Expected: folders first; `truncated: true` on README with `max_chars` 2000; a folder error for `src` | Checks the context guards against a real repository |
 | Inspector → `list_issues` limit 5, `list_pull_requests` state all (step 4, to do) | Expected: 5 issues with `has_more: true`; PRs with `head`, `base`, `draft`; `state: merged` rejected | Checks pagination and field mapping against real data |
 | Inspector → `get_rate_limit` (step 5, to do) | Expected: `limit` 5000 with your token; `used` goes up after calling another tool | Confirms the token is used and the budget is read correctly |
+| Inspector → Resources → `readme`, Prompts → `summarize_repository` / `review_pull_request` (step 6, to do) | Expected: README text; the filled-in prompt; a PR's description and diffs | Checks the other two primitives against real data |
+| Inspector → `create_issue` (step 6, to do) | Expected: "Creating issues is turned off" | Proves the safety switch works with the real server |
 | `git status` before committing | `.env` not listed | Proves the token can never be pushed to GitHub |
 
 # Part 5. Commands you used
@@ -1484,6 +1740,26 @@ A fixture replaces the sleep function with a recorder, respx `side_effect` lists
 **42. Why write "retrying now will not help" in an error message?**
 The error goes back to the model as text, so it works as a prompt. It should tell the model what to do next: stop and tell the user when the limit resets.
 
+## Resources, prompts and writes (step 6)
+
+**43. What's the difference between tools, resources and prompts?**
+Tools are actions the model decides to call, and may have side effects. Resources are read-only data with URIs that the application or user attaches as context. Prompts are templates the user picks, like slash commands. Model-controlled, application-controlled, user-controlled.
+
+**44. How did you make your write tool safe?**
+Five layers: a least-privilege token, a server setting that keeps writes off by default, annotations marking it non-read-only so hosts ask the user to approve, instructions to confirm the title and body with the user first, and no blind retries after errors.
+
+**45. Are tool annotations a security boundary?**
+No. They're hints that a host may ignore. Real enforcement is the token's permissions and the server-side switch that refuses writes before any request is made.
+
+**46. Why don't you retry a POST that failed with a 502 or timed out?**
+It isn't idempotent. GitHub may have created the issue before the error, so a retry could create a duplicate. Without an idempotency key, I report the failure and tell the model to check before trying again.
+
+**47. Why does your review prompt load the diff itself?**
+It gives the model the whole pull request up front instead of several tool calls, and a 40,000-character budget stops a huge PR flooding the context. Diffs that don't fit are listed, with a pointer to read them with `get_file_contents`.
+
+**48. What's a resource template?**
+A resource URI with placeholders, like `github://repos/{owner}/{repo}/readme`. One definition serves every repository; clients list templates and then read concrete URIs.
+
 # Part 7. Practise checklist
 
 - [ ] Say the 30-second pitch out loud without notes.
@@ -1493,5 +1769,6 @@ The error goes back to the model as text, so it works as a prompt. It should tel
 - [ ] Explain why `ctx: Context` doesn't appear in the tool's input schema.
 - [ ] In the Inspector, trigger each error (missing repo, folder passed to `get_file_contents`) and explain what the model sees.
 - [ ] Explain `get_paginated` line by line, including the same-host check.
-- [ ] Explain the retry loop in `_get_response`: what is retried, what isn't, and why.
-- [ ] Answer all 42 questions in your own words, then compare.
+- [ ] Explain the retry loop in `_request`: what is retried, what isn't, and why POST is different.
+- [ ] Explain the five safety layers around `create_issue`.
+- [ ] Answer all 48 questions in your own words, then compare.
