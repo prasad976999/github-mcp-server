@@ -25,6 +25,7 @@ from github_mcp.models import (
     IssueSummary,
     PullRequestList,
     PullRequestSummary,
+    RateLimitStatus,
     RepoSearchResult,
     Repository,
     RepoSummary,
@@ -61,7 +62,9 @@ mcp = MCPServer(
         "Use search_repositories to find repositories, then get_repository for details. "
         "To read code, call list_directory to explore, then get_file_contents for one file. "
         "list_issues and list_pull_requests return the most recent first; has_more=true "
-        "means there are more than you were given."
+        "means there are more than you were given. "
+        "If a tool reports a rate limit, call get_rate_limit and tell the user when it resets "
+        "instead of retrying."
     ),
     lifespan=lifespan,
 )
@@ -102,6 +105,17 @@ def server_status() -> ServerStatus:
         github_api_url=settings.github_api_url,
         authenticated=settings.github_token is not None,
     )
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_rate_limit(ctx: Context) -> RateLimitStatus:
+    """Show how many GitHub API requests are left this hour and when the budget resets.
+    Checking it does not use up any requests."""
+    try:
+        data = await _github(ctx).get("/rate_limit")
+    except GitHubAPIError as exc:
+        raise ToolError(str(exc)) from exc
+    return RateLimitStatus.from_api(data, authenticated=settings.github_token is not None)
 
 
 @mcp.tool(annotations=READ_ONLY)

@@ -4,7 +4,7 @@ GitHub's repository JSON has ~100 fields, most of them URLs. Sending all of it
 wastes the model's context window, so each model keeps only what is useful.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel
@@ -148,3 +148,24 @@ class PullRequestList(BaseModel):
     returned: int
     has_more: bool
     items: list[PullRequestSummary]
+
+
+class RateLimitStatus(BaseModel):
+    authenticated: bool
+    limit: int  # requests allowed per hour
+    remaining: int
+    used: int
+    resets_at: datetime
+    search_remaining: int  # search has its own, smaller per-minute budget
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any], authenticated: bool) -> "RateLimitStatus":
+        core = data["resources"]["core"]
+        return cls(
+            authenticated=authenticated,
+            limit=core["limit"],
+            remaining=core["remaining"],
+            used=core["used"],
+            resets_at=datetime.fromtimestamp(core["reset"], UTC),
+            search_remaining=data["resources"]["search"]["remaining"],
+        )

@@ -1,6 +1,6 @@
 ---
 title: "GitHub MCP Server — Study Guide"
-subtitle: "Everything built in steps 1–4: concepts, code walkthrough, commands and interview answers"
+subtitle: "Everything built in steps 1–5: concepts, code walkthrough, commands and interview answers"
 ---
 
 # How to use this guide
@@ -14,21 +14,22 @@ Suggested study order:
 3. Work through **Part 4** (code walkthrough) with the real files open in VS Code.
 4. Test yourself with **Part 6** (interview questions). Cover the answer, say yours, then compare.
 
-**Progress:** steps 1–4 of 8 complete.
+**Progress:** steps 1–5 of 8 complete.
 
 | Step | What was built | Status |
 |---|---|---|
 | 1 | Project scaffold, config, `server_status` tool, first test | Done, verified on your laptop |
 | 2 | GitHub client, `search_repositories`, `get_repository`, error handling | Done, verified live, committed |
-| 3 | `list_directory`, `get_file_contents` (reading code) | Built, 13 tests pass |
-| 4 | `list_issues`, `list_pull_requests`, safe pagination | Built, 21 tests pass |
-| 5–8 | Rate limits and retries, resources & prompts, CI, Docker | Coming next |
+| 3 | `list_directory`, `get_file_contents` (reading code) | Done, committed |
+| 4 | `list_issues`, `list_pull_requests`, safe pagination | Done, 21 tests pass on your laptop, committed |
+| 5 | Retries with backoff, rate-limit handling, `get_rate_limit` | Built, 30 tests pass |
+| 6–8 | Resources & prompts, CI, Docker | Coming next |
 
 # Part 1. Your project in one minute
 
 ## The 30-second pitch
 
-> "I built an MCP server in Python that gives AI assistants like Claude safe, structured access to GitHub. It can search repositories, fetch details, browse folders, read source files, and list issues and pull requests. I used the official MCP Python SDK, an async httpx client for the GitHub REST API, and Pydantic models to keep outputs small and typed. I focused on tool design: clear names and descriptions, input validation, error messages the model can act on, and guards so large files or long lists never flood the model's context. It's covered by tests that mock GitHub, so they run offline in about a second."
+> "I built an MCP server in Python that gives AI assistants like Claude safe, structured access to GitHub. It can search repositories, fetch details, browse folders, read source files, and list issues and pull requests. I used the official MCP Python SDK, an async httpx client for the GitHub REST API, and Pydantic models to keep outputs small and typed. I focused on tool design: clear names and descriptions, input validation, error messages the model can act on, and guards so large files or long lists never flood the model's context. It retries temporary failures with exponential backoff and handles GitHub's rate limits without hanging. It's covered by tests that mock GitHub, so they run offline in about a second."
 
 ## The 2-minute walkthrough
 
@@ -36,9 +37,9 @@ When an interviewer says *"walk me through your project"*:
 
 1. **What MCP is.** An open protocol that standardises how AI applications connect to tools and data. You wrap a service once as an MCP server, and any MCP host can use it.
 2. **Architecture.** The host (Claude Desktop or Claude Code) launches my server as a subprocess and talks JSON-RPC over stdin/stdout. My server has three layers: the MCP layer (`server.py`) defines the tools, the API layer (`github_client.py`) does HTTP, and the models layer (`models.py`) shapes what the model sees.
-3. **Tools.** `search_repositories`, `get_repository`, `list_directory`, `get_file_contents`, `list_issues`, `list_pull_requests`, and `server_status`.
-4. **Engineering decisions.** One shared async HTTP client created in the server's lifespan; outputs trimmed from ~100 fields to ~13; pagination that follows GitHub's `Link` headers with a 5-page cap; files cut off at a limit with an explicit `truncated` flag; every failure turned into a readable tool error; a fine-grained read-only token loaded from the environment.
-5. **Testing.** `pytest` with `respx` to fake GitHub (including 404s, timeouts, binary and oversized files), calling tools through the SDK's in-process client exactly as a real host would.
+3. **Tools.** `search_repositories`, `get_repository`, `list_directory`, `get_file_contents`, `list_issues`, `list_pull_requests`, `get_rate_limit`, and `server_status`.
+4. **Engineering decisions.** One shared async HTTP client created in the server's lifespan; outputs trimmed from ~100 fields to ~13; pagination that follows GitHub's `Link` headers with a 5-page cap; files cut off at a limit with an explicit `truncated` flag; network errors and 5xx retried with exponential backoff and jitter, rate limits waited out only when the wait is short; every failure turned into a readable tool error; a fine-grained read-only token loaded from the environment.
+5. **Testing.** `pytest` with `respx` to fake GitHub (including 404s, timeouts, server errors, rate limits, binary and oversized files), calling tools through the SDK's in-process client exactly as a real host would.
 
 # Part 2. Core concepts
 
@@ -95,6 +96,10 @@ All messages are **JSON-RPC 2.0**: requests with an `id`, `method` and `params`,
 | **Pagination** | Splitting a long list of results into pages; GitHub gives at most 100 items per page |
 | **`Link` header** | A response header where GitHub says where the next page is (`rel="next"`) |
 | **Enum (`Literal`)** | A fixed set of allowed values, e.g. `open`, `closed`, `all`; shown to the model in the schema |
+| **Idempotent** | Doing a request twice has the same effect as doing it once (true for GET); makes retries safe |
+| **Exponential backoff** | Waiting longer after each failed attempt (0.5 s, then 1 s…) so a struggling server isn't flooded |
+| **Jitter** | Randomness added to the wait so many clients don't all retry at the same instant |
+| **Rate limit** | GitHub's cap on requests: 60/hour without a token, 5,000/hour with one |
 | **Fine-grained token** | A GitHub token limited to specific permissions and repositories, with an expiry date |
 
 # Part 3. Architecture
@@ -105,7 +110,7 @@ All messages are **JSON-RPC 2.0**: requests with an `id`, `method` and `params`,
           ▼
   ┌───────────────── github-mcp server ──────────────────┐
   │  server.py         MCP layer: tools, validation      │
-  │  github_client.py  HTTP layer: auth, errors          │
+  │  github_client.py  HTTP layer: auth, retries, errors │
   │  models.py         output shapes (trimmed)           │
   │  config.py         settings from the environment     │
   └──────────────────────────────────────────────────────┘
@@ -119,7 +124,7 @@ Each layer has one job:
 | Layer | File | Knows about | Doesn't know about |
 |---|---|---|---|
 | MCP | `server.py` | Tools, descriptions, validation, errors for the model | URLs, headers, HTTP |
-| HTTP | `github_client.py` | Base URL, auth, timeouts, status codes | MCP |
+| HTTP | `github_client.py` | Base URL, auth, timeouts, retries, rate limits, status codes | MCP |
 | Models | `models.py` | Which fields the model sees | Where data comes from |
 | Config | `config.py` | Environment variables, `.env` | Everything else |
 
@@ -145,7 +150,8 @@ github-mcp-server/
 │   ├── test_server.py      # step 1
 │   ├── test_repositories.py# step 2
 │   ├── test_contents.py    # step 3
-│   └── test_issues_and_prs.py # step 4
+│   ├── test_issues_and_prs.py # step 4
+│   └── test_errors_and_retries.py # step 5
 └── docs/                   # roadmap, step explainers, this guide
 ```
 
@@ -276,7 +282,7 @@ class GitHubAPIError(Exception):
 ```
 
 - A **custom exception** means callers only need to catch one type for every GitHub failure (network, timeout, 404, 401…).
-- It keeps the **`status_code`** so code can react differently later (for example, retrying on 503 in step 5).
+- It keeps the **`status_code`** so code can react differently later (step 5 uses it to decide what to retry).
 - The message is written **for the model to read**, because the model decides what to do next.
 
 ### Creating the client
@@ -297,6 +303,7 @@ class GitHubClient:
             headers=headers,
             timeout=settings.request_timeout_s,
         )
+        self._authenticated = settings.github_token is not None  # step 5: for error hints
 ```
 
 - **`Accept: application/vnd.github+json`**: GitHub's recommended media type for its REST API.
@@ -312,34 +319,19 @@ class GitHubClient:
 ### Making a request
 
 ```python
-    async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        response = await self._get_response(path, params)
-        return response.json()
+async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+    response = await self._get_response(path, params)
+    return response.json()
 
-    async def _get_response(self, url: str, params: dict[str, Any] | None) -> httpx.Response:
-        try:
-            response = await self._http.get(url, params=params)
-        except httpx.TimeoutException as exc:
-            raise GitHubAPIError(504, f"GitHub did not respond in time ({url}).") from exc
-        except httpx.HTTPError as exc:
-            raise GitHubAPIError(502, f"Could not reach GitHub: {exc}") from exc
 
-        if response.is_success:
-            return response
-        raise GitHubAPIError(response.status_code, _error_message(response))
-
-    async def aclose(self) -> None:
-        await self._http.aclose()
+async def aclose(self) -> None:
+    await self._http.aclose()
 ```
 
 - **`get()`** is for single objects (one repository, one file). It returns parsed JSON.
-- **`_get_response()`** does the actual request and all the error handling, and returns the full response (so pagination can read its headers). Both `get()` and `get_paginated()` use it, so **error handling lives in exactly one place**. (Until step 4 this code sat directly inside `get()`.)
+- **`_get_response()`** does the actual request, the retries and all the error handling, and returns the full response (so pagination can read its headers). Both `get()` and `get_paginated()` use it, so **error handling lives in exactly one place**. It is explained in full in *Retries and rate limits (step 5)* below.
 - **`async def` / `await`**: while waiting for GitHub, Python can serve other requests. Network calls are **I/O-bound** (mostly waiting), which is exactly where async helps.
 - **`params=params`**: httpx turns a dict like `{"q": "mcp", "per_page": 5}` into `?q=mcp&per_page=5`, URL-encoding it safely.
-- **Order of `except` matters**: `TimeoutException` is a kind of `HTTPError`, so it must be caught first to get the more specific message.
-- **504 / 502**: we reuse standard HTTP gateway codes for "GitHub timed out" and "GitHub unreachable".
-- **`from exc`**: keeps the original exception attached for debugging (exception chaining).
-- **`response.is_success`**: true for any 2xx status.
 - **`aclose()`**: closes the pooled connections. The server calls it at shutdown.
 
 ### Pagination (step 4)
@@ -398,6 +390,133 @@ MAX_PAGES = 5
 
 **Why follow `Link` instead of building `?page=N` ourselves?** GitHub uses page numbers on most endpoints but cursors on some. Following whatever "next" link GitHub gives works with both, and if GitHub changes its scheme our code keeps working.
 
+### Retries and rate limits (step 5)
+
+New constants at the top of the file:
+
+```python
+MAX_ATTEMPTS = 3  # the first try plus two retries
+BASE_DELAY_S = 0.5  # backoff ceiling doubles each time: 0.5s, then 1s
+RETRYABLE_STATUS = {500, 502, 503, 504}
+
+# A tool call should never hang for minutes. Longer rate-limit waits are reported instead.
+MAX_WAIT_S = 10.0
+
+logger = logging.getLogger("github_mcp.github_client")
+
+# Indirection so tests can replace sleeping with a recorder and run instantly.
+_sleep = asyncio.sleep
+```
+
+**The error taxonomy.** The question behind every decision is *"would the exact same request succeed if sent again?"*
+
+| Failure | Retry? | Why |
+|---|---|---|
+| Timeout or network error | Yes | Usually temporary |
+| 500, 502, 503, 504 | Yes | GitHub's problem, often gone in a second |
+| Rate limit with a short wait (≤ 10 s) | Wait, then yes | GitHub said when it's OK |
+| Rate limit with a long wait | No, report it | A tool call must not hang for 30 minutes |
+| Other 4xx (404, 401, 422, plain 403) | No | Same request, same failure; the model must change its input |
+
+**Idempotency** makes retrying safe: every call here is a `GET`, and doing a GET twice changes nothing. A `POST` such as `create_issue` (step 6) must not be retried blindly, because a lost response could mean the issue was created and a retry would make a duplicate.
+
+```python
+async def _get_response(self, url: str, params: dict[str, Any] | None) -> httpx.Response:
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            response = await self._http.get(url, params=params)
+        except httpx.TimeoutException as exc:
+            error = GitHubAPIError(504, f"GitHub did not respond in time ({url}).")
+            error.__cause__ = exc
+        except httpx.HTTPError as exc:
+            error = GitHubAPIError(502, f"Could not reach GitHub: {exc}")
+            error.__cause__ = exc
+        else:
+            if response.is_success:
+                return response
+
+            wait = _rate_limit_wait(response)
+            if wait is not None:
+                if wait > MAX_WAIT_S or attempt == MAX_ATTEMPTS:
+                    raise GitHubAPIError(response.status_code, self._rate_limit_message(wait))
+                logger.warning("Rate limited by GitHub; waiting %.1fs before retrying", wait)
+                await _sleep(wait)
+                continue
+
+            error = GitHubAPIError(response.status_code, _error_message(response))
+            if response.status_code not in RETRYABLE_STATUS:
+                raise error
+
+        if attempt == MAX_ATTEMPTS:
+            raise GitHubAPIError(
+                error.status_code, f"{error} Gave up after {MAX_ATTEMPTS} attempts."
+            ) from error.__cause__
+
+        delay = random.uniform(0, BASE_DELAY_S * 2 ** (attempt - 1))
+        logger.warning("Attempt %d failed (%s); retrying in %.2fs", attempt, error, delay)
+        await _sleep(delay)
+
+    raise AssertionError("unreachable")  # the loop always returns or raises
+```
+
+- **`for attempt in range(1, MAX_ATTEMPTS + 1)`**: a bounded loop, attempts 1, 2 and 3.
+- **`try / except / else`**: `except` handles "no response at all" (network, timeout); `else` runs only when a response arrived.
+- **Order of `except` matters**: `TimeoutException` is a kind of `HTTPError`, so it must be caught first to get the more specific message.
+- **504 / 502**: standard HTTP gateway codes reused for "GitHub timed out" and "GitHub unreachable".
+- **`error.__cause__ = exc`**: attaches the original exception, the same thing `raise ... from exc` does, so tracebacks show the real cause.
+- **`response.is_success`**: true for any 2xx status; return straight away.
+- **Rate limit branch**: a short wait is slept out and the loop `continue`s to the next attempt; a long wait (or no attempts left) raises a message with the reset time instead.
+- **`if response.status_code not in RETRYABLE_STATUS: raise error`**: other 4xx errors fail immediately. No wasted requests.
+- **"Gave up after 3 attempts"**: tells the model the server already retried, so retrying again itself is pointless.
+- **`random.uniform(0, 0.5 * 2 ** (attempt - 1))`**: **exponential backoff with full jitter**. The ceiling doubles (0.5 s, 1 s) so a struggling GitHub isn't hammered; the random pick spreads out many clients that failed at the same time (avoiding a "thundering herd").
+- **`logger.warning`**: goes to stderr, so retries show in the Inspector's server log without breaking stdio.
+- **`await _sleep(...)`**: `asyncio.sleep`, not `time.sleep`, so the server keeps serving other requests while waiting. Tests swap `_sleep` for a recorder.
+- **`raise AssertionError("unreachable")`**: the loop always returns or raises; this line satisfies type checkers and would flag a logic bug loudly.
+
+How long does GitHub want us to wait?
+
+```python
+def _rate_limit_wait(response: httpx.Response) -> float | None:
+    """Seconds GitHub wants us to wait, or None if this error is not a rate limit."""
+    if response.status_code not in (403, 429):
+        return None
+    retry_after = response.headers.get("retry-after")
+    if retry_after is not None:  # secondary rate limit: GitHub says exactly how long
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            return 60.0
+    if response.headers.get("x-ratelimit-remaining") == "0":  # hourly budget used up
+        try:
+            return max(0.0, int(response.headers["x-ratelimit-reset"]) - time.time())
+        except (KeyError, ValueError):
+            return 60.0
+    if response.status_code == 429:  # no hint given; GitHub's docs say wait a minute
+        return 60.0
+    return None  # a 403 without rate-limit headers is a permissions problem
+```
+
+- **Primary limit**: 60 requests/hour without a token, 5,000 with one. Every response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` (a Unix timestamp).
+- **Secondary limits**: burst protection (too many requests too fast). GitHub answers 403 or 429, usually with `Retry-After: <seconds>`.
+- **403 is ambiguous**: GitHub uses it for both "quota used up" and "no permission". The headers tell them apart; a plain 403 returns `None` so we don't wait for nothing.
+- **`max(0.0, ...)`**: never a negative wait if the clock says the reset already passed.
+- **Fallback of 60 seconds** when a header is malformed, following GitHub's guidance.
+
+```python
+def _rate_limit_message(self, wait_s: float) -> str:
+    minutes = max(1, round(wait_s / 60))
+    message = (
+        f"GitHub rate limit reached. It resets in about {minutes} minute(s). "
+        "Retrying now will not help; tell the user and try again later."
+    )
+    if not self._authenticated:
+        message += " Adding a GITHUB_TOKEN raises the limit from 60 to 5,000 requests/hour."
+    return message
+```
+
+- **The error message is a prompt.** Models tend to retry failed tools, so the message says plainly what to do instead: stop and tell the user.
+- **`self._authenticated`** is set in `__init__` from `settings.github_token is not None`; the token hint only appears when it would actually help.
+
 ### Error messages
 
 ```python
@@ -409,9 +528,13 @@ def _error_message(response: httpx.Response) -> str:
 
     hints = {
         401: "The GitHub token is missing, invalid or expired.",
-        403: "Access denied or rate limit reached.",
+        403: "Access denied. The token may not have permission for this.",
         404: "Not found. Check the owner and repository names, or the token may lack access.",
         422: "GitHub rejected the request parameters.",
+        500: "GitHub had an internal error.",
+        502: "GitHub is temporarily unavailable.",
+        503: "GitHub is temporarily unavailable.",
+        504: "GitHub timed out.",
     }
     hint = hints.get(response.status_code, "GitHub returned an error.")
     return f"{hint} (HTTP {response.status_code}: {detail})"
@@ -420,6 +543,7 @@ def _error_message(response: httpx.Response) -> str:
 - GitHub error bodies usually look like `{"message": "Not Found"}`. If the body isn't JSON, we take the first 200 characters of text instead.
 - A **plain-English hint per status code** tells the model what probably went wrong and what to try. This is what you saw in the Inspector for `nobody-xyz/nothing`.
 - The raw status and GitHub's own message are kept in brackets for precision.
+- Since step 5, the 403 hint only talks about permissions: real rate limits are caught earlier by `_rate_limit_wait` and get their own message.
 
 ## 4.4 `models.py`: output shapes
 
@@ -529,14 +653,14 @@ class PullRequestSummary(BaseModel):
     state: str
     author: str | None
     draft: bool
-    head: str     # from data["head"]["ref"]: the branch with the changes
-    base: str     # from data["base"]["ref"]: the branch it merges into
+    head: str  # from data["head"]["ref"]: the branch with the changes
+    base: str  # from data["base"]["ref"]: the branch it merges into
     created_at: datetime
     updated_at: datetime
     url: str
 
 
-class IssueList(BaseModel):          # PullRequestList has the same shape
+class IssueList(BaseModel):  # PullRequestList has the same shape
     repository: str
     state: str
     returned: int
@@ -553,6 +677,33 @@ class IssueList(BaseModel):          # PullRequestList has the same shape
 - **`total_count` + `items`**: tells the model "70,718 matches, here are 5", so it knows results are partial.
 - **`FileContents.truncated` and `is_binary`**: flags that tell the model *what it didn't get*, which is essential to stop it reasoning from incomplete data.
 - **Why Pydantic models instead of dicts?** The SDK turns the return type into an **output schema** and returns **`structuredContent`**: typed, predictable JSON. In step 1 our test proved a plain dict produced no structured output.
+
+Step 5 added one more model, for the new `get_rate_limit` tool:
+
+```python
+class RateLimitStatus(BaseModel):
+    authenticated: bool
+    limit: int  # requests allowed per hour
+    remaining: int
+    used: int
+    resets_at: datetime
+    search_remaining: int  # search has its own, smaller per-minute budget
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any], authenticated: bool) -> "RateLimitStatus":
+        core = data["resources"]["core"]
+        return cls(
+            authenticated=authenticated,
+            limit=core["limit"],
+            remaining=core["remaining"],
+            used=core["used"],
+            resets_at=datetime.fromtimestamp(core["reset"], UTC),
+            search_remaining=data["resources"]["search"]["remaining"],
+        )
+```
+
+- **`core`** is the main REST budget; **`search`** is separate (30 requests per minute), so both are reported.
+- **`datetime.fromtimestamp(..., UTC)`**: GitHub sends the reset as a Unix timestamp (seconds since 1970); converting it gives the model a readable date-time with an explicit time zone.
 
 ## 4.5 `server.py`: the MCP layer
 
@@ -603,7 +754,11 @@ mcp = MCPServer(
     instructions=(
         "Tools for exploring GitHub repositories, issues and pull requests. "
         "Use search_repositories to find repositories, then get_repository for details. "
-        "To read code, call list_directory to explore, then get_file_contents for one file."
+        "To read code, call list_directory to explore, then get_file_contents for one file. "
+        "list_issues and list_pull_requests return the most recent first; has_more=true "
+        "means there are more than you were given. "
+        "If a tool reports a rate limit, call get_rate_limit and tell the user when it resets "
+        "instead of retrying."
     ),
     lifespan=lifespan,
 )
@@ -616,7 +771,7 @@ def _github(ctx: Context) -> GitHubClient:
 ```
 
 - **`MCPServer`**: the high-level server class in **MCP Python SDK v2**. In v1 it was called `FastMCP`. Most tutorials online still show v1, so mentioning that you used the current v2 API is a good detail.
-- **`instructions`**: sent to the host during `initialize`. It's guidance that spans several tools: *the workflow*, search then get, list then read.
+- **`instructions`**: sent to the host during `initialize`. It's guidance that spans several tools: *the workflow*, search then get, list then read, and (since step 5) what to do about a rate limit.
 - **`ToolAnnotations(read_only_hint=True, open_world_hint=True)`**: tells hosts these tools don't change anything and talk to an external system. Hosts can skip confirmation prompts for read-only tools. These are **hints, not security**.
 - **`_github(ctx)`**: a small helper that fetches the shared client from the lifespan context. This is **dependency injection**: tools receive the client and don't create it.
 
@@ -663,6 +818,24 @@ def server_status() -> ServerStatus:
   - the **return type** → output JSON Schema.
 - **Key insight: the docstring and parameter descriptions are the prompt.** They're how the model knows what the tool does.
 - Reports `authenticated` as a boolean, **never the token**.
+
+### Tool 1b: `get_rate_limit` (step 5)
+
+```python
+@mcp.tool(annotations=READ_ONLY)
+async def get_rate_limit(ctx: Context) -> RateLimitStatus:
+    """Show how many GitHub API requests are left this hour and when the budget resets.
+    Checking it does not use up any requests."""
+    try:
+        data = await _github(ctx).get("/rate_limit")
+    except GitHubAPIError as exc:
+        raise ToolError(str(exc)) from exc
+    return RateLimitStatus.from_api(data, authenticated=settings.github_token is not None)
+```
+
+- **`GET /rate_limit`** is free: GitHub doesn't count it against your budget, which the docstring tells the model so it isn't afraid to call it.
+- **Why a tool?** The model can check the budget before a big exploration, or explain a rate-limit error to the user with the exact reset time.
+- Same pattern as every other tool: shared client from `ctx`, `GitHubAPIError` → `ToolError`, Pydantic model out.
 
 ### Tool 2: `get_repository`
 
@@ -973,6 +1146,7 @@ if __name__ == "__main__":
 import pytest
 import respx
 
+from github_mcp import github_client
 from github_mcp.server import settings
 
 
@@ -981,12 +1155,25 @@ def github_api():
     """Intercept every HTTP call to the GitHub API; unmatched calls fail the test."""
     with respx.mock(base_url=settings.github_api_url, assert_all_called=False) as router:
         yield router
+
+
+@pytest.fixture(autouse=True)
+def sleeps(monkeypatch):
+    """Replace real waiting with a list of the delays asked for, so retry tests run instantly."""
+    delays: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(github_client, "_sleep", fake_sleep)
+    return delays
 ```
 
 - **`conftest.py`**: pytest automatically shares fixtures defined here with every test file.
 - **A fixture** is setup code a test asks for by naming it as a parameter (`def test_x(github_api)`).
 - **`respx.mock`** intercepts every httpx request. Tests declare which URLs return what, and **any unexpected request fails the test**, so tests can never touch the real internet.
 - **Why mock?** Tests are fast (~1 second), work offline and in CI, never hit rate limits, and can simulate failures (404, timeouts) that are hard to trigger for real.
+- **`sleeps` (step 5)**: `autouse=True` applies it to **every** test without asking. `monkeypatch.setattr` swaps the client's `_sleep` for a fake that only records the delay, and undoes the swap after each test. Retry tests never really wait, and can assert exactly how long the code *would* have waited. **Never make tests actually sleep**: it makes suites slow and flaky.
 
 ### `test_server.py`: the wiring
 
@@ -1078,6 +1265,36 @@ Pages are simulated with respx's `side_effect`: a function that looks at the req
 
 That last point is a useful habit worth mentioning in interviews: **a test you've never seen fail might not be testing anything.** Break the code on purpose once and confirm the test catches it.
 
+### `test_errors_and_retries.py`: step 5 tests
+
+Two respx tricks: `route.side_effect = [response1, response2]` returns the responses **in order** (fail, then succeed), and `route.call_count` says how many requests were really made.
+
+```python
+async def test_server_error_is_retried_then_succeeds(github_api, sleeps):
+    route = github_api.get("/repos/pallets/flask")
+    route.side_effect = [httpx.Response(503), httpx.Response(200, json=FLASK)]
+
+    result = await call_get_repository()
+
+    assert result.is_error is False
+    assert route.call_count == 2
+    assert len(sleeps) == 1 and 0 <= sleeps[0] <= 0.5
+```
+
+| Test | What it checks | Why it's needed |
+|---|---|---|
+| `test_server_error_is_retried_then_succeeds` | 503 then 200 → success, 2 requests, one wait ≤ 0.5 s | The basic retry path |
+| `test_backoff_doubles_between_attempts` | With `random.uniform` patched to return its maximum, waits are exactly `[0.5, 1.0]` | Proves the backoff is exponential |
+| `test_gives_up_after_max_attempts` | Always 503 → exactly 3 requests, "Gave up after 3 attempts" | Retries are bounded |
+| `test_timeout_is_retried` | A timeout, then 200 → success | Network failures are retried too |
+| `test_not_found_is_not_retried` | 404 → 1 request, no waiting | Don't waste requests on errors that won't change |
+| `test_short_retry_after_is_waited_out` | 429 with `Retry-After: 2` → waits exactly 2 s, then succeeds | Respects GitHub's instruction |
+| `test_exhausted_hourly_limit_is_reported_not_waited` | 403 with `Remaining: 0`, reset in 30 min → 1 request, no wait, "30 minute" in the message | A tool call never hangs for minutes |
+| `test_forbidden_without_rate_limit_headers_is_not_retried` | Plain 403 → "Access denied", no wait | Tells permission errors apart from rate limits |
+| `test_get_rate_limit_reports_core_budget` | Numbers and reset date mapped from `/rate_limit` | The new tool's happy path |
+
+Same habit as step 4: **removing the "don't retry other 4xx" line makes the 404 and plain-403 tests fail**, so they really guard that rule.
+
 ## 4.7 Why test this way
 
 - **Every test goes through the real MCP path** (`Client` → `tools/call` → our function), not by calling functions directly. That way the tests also cover tool registration, schemas, validation and error conversion.
@@ -1091,13 +1308,14 @@ Automated tests use a *fake* GitHub. These manual checks proved the server works
 
 | Check | Result you saw | Why we did it |
 |---|---|---|
-| `uv run pytest` on your laptop | 1, then 6, then 13 passed | Proves the code runs on Windows with your Python, not just in my environment |
+| `uv run pytest` on your laptop | 1, then 6, then 13, then 21 passed | Proves the code runs on Windows with your Python, not just in my environment |
 | Inspector → `server_status` | `version 0.1.0`, `authenticated: false`, then `true` after adding `.env` | Confirms the MCP wiring works end to end, then that the token is loaded |
 | Inspector → `search_repositories` `mcp server language:python`, limit 5 | 5 items, `total_count` 70,718 | Real API call with the token; shows the trimming and the limit working |
 | Inspector → `get_repository` `modelcontextprotocol/python-sdk` | 13 fields incl. `license: "MIT"`, topics | Real detail view; checks the field mapping against real data |
 | Inspector → `get_repository` `nobody-xyz/nothing` | "Not found. Check the owner and repository names…" | Proves real GitHub errors reach the model as readable messages |
 | Inspector → `list_directory` / `get_file_contents` (step 3, in progress) | Expected: folders first; `truncated: true` on README with `max_chars` 2000; a folder error for `src` | Checks the context guards against a real repository |
 | Inspector → `list_issues` limit 5, `list_pull_requests` state all (step 4, to do) | Expected: 5 issues with `has_more: true`; PRs with `head`, `base`, `draft`; `state: merged` rejected | Checks pagination and field mapping against real data |
+| Inspector → `get_rate_limit` (step 5, to do) | Expected: `limit` 5000 with your token; `used` goes up after calling another tool | Confirms the token is used and the budget is read correctly |
 | `git status` before committing | `.env` not listed | Proves the token can never be pushed to GitHub |
 
 # Part 5. Commands you used
@@ -1246,6 +1464,26 @@ The client sends the token on every request, so a "next" URL to another host wou
 **36. Why use `Literal` for the `state` parameter?**
 It becomes an enum in the JSON Schema: the model sees the allowed values, and invalid ones are rejected automatically.
 
+## Retries and rate limits (step 5)
+
+**37. Which errors do you retry, and which not?**
+Timeouts, network errors and 5xx, because they're usually temporary. Not other 4xx, because the same request would fail the same way; the model has to change its input instead.
+
+**38. What is exponential backoff with jitter, and why the jitter?**
+Each retry waits up to twice as long as the last (0.5 s, then 1 s). The actual wait is random within that ceiling, so many clients that failed together don't retry in lockstep and overload the server again.
+
+**39. What is idempotency and why does it matter for retries?**
+Doing a request twice has the same effect as once. GETs are idempotent, so retrying is safe. A POST like `create_issue` isn't: if the response was lost, a retry could create a duplicate.
+
+**40. How do you handle GitHub's rate limits?**
+I read `Retry-After` and the `X-RateLimit-*` headers. Waits of 10 seconds or less I wait out; longer ones I report with the reset time, because a tool call shouldn't hang. A `get_rate_limit` tool shows the remaining budget.
+
+**41. How do you test retries without slow tests?**
+A fixture replaces the sleep function with a recorder, respx `side_effect` lists simulate fail-then-succeed, and the tests assert on the request count and the recorded delays.
+
+**42. Why write "retrying now will not help" in an error message?**
+The error goes back to the model as text, so it works as a prompt. It should tell the model what to do next: stop and tell the user when the limit resets.
+
 # Part 7. Practise checklist
 
 - [ ] Say the 30-second pitch out loud without notes.
@@ -1255,4 +1493,5 @@ It becomes an enum in the JSON Schema: the model sees the allowed values, and in
 - [ ] Explain why `ctx: Context` doesn't appear in the tool's input schema.
 - [ ] In the Inspector, trigger each error (missing repo, folder passed to `get_file_contents`) and explain what the model sees.
 - [ ] Explain `get_paginated` line by line, including the same-host check.
-- [ ] Answer all 36 questions in your own words, then compare.
+- [ ] Explain the retry loop in `_get_response`: what is retried, what isn't, and why.
+- [ ] Answer all 42 questions in your own words, then compare.
