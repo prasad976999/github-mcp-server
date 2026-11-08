@@ -14,6 +14,8 @@ from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.shared.exceptions import MCPError
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, ToolAnnotations
 from pydantic import BaseModel, Field
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from github_mcp import __version__
 from github_mcp.config import Settings
@@ -102,6 +104,7 @@ class ServerStatus(BaseModel):
     github_api_url: str
     authenticated: bool
     writes_enabled: bool
+    transport: str
 
 
 @mcp.tool()
@@ -112,6 +115,7 @@ def server_status() -> ServerStatus:
         github_api_url=settings.github_api_url,
         authenticated=settings.github_token is not None,
         writes_enabled=settings.allow_writes,
+        transport=settings.transport,
     )
 
 
@@ -460,9 +464,20 @@ def _decode_text(raw: bytes) -> str | None:
         return None
 
 
+@mcp.custom_route("/health", methods=["GET"])
+async def health(_request: Request) -> JSONResponse:
+    """Liveness check for Docker and load balancers (HTTP mode only, no auth, no GitHub call)."""
+    return JSONResponse({"status": "ok", "version": __version__})
+
+
 def main() -> None:
-    logger.info("Starting GitHub MCP server v%s", __version__)
-    mcp.run()  # stdio by default
+    logger.info("Starting GitHub MCP server v%s (%s)", __version__, settings.transport)
+    if settings.transport == "http":
+        from github_mcp.http_app import serve
+
+        serve(settings)
+    else:
+        mcp.run()  # stdio: the client starts this process and talks over stdin/stdout
 
 
 if __name__ == "__main__":

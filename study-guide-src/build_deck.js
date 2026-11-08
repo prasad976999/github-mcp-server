@@ -70,6 +70,8 @@ const N = {};
 N.title = add("title");
 N.contents = add("contents");
 N.pitch = add("pitch");
+N.plan = add("plan");
+N.uses = add("uses");
 N.roles = add("roles");
 N.primitives = add("primitives");
 N.handshake = add("handshake");
@@ -84,8 +86,11 @@ N.retries = add("retries");
 N.writes = add("writes");
 N.tests = add("tests");
 N.tests2 = add("tests2");
+N.tests3 = add("tests3");
 N.manual = add("manual");
 N.ci = add("ci");
+N.deploy = add("deploy");
+N.docker = add("docker");
 N.cards = add("cards");
 const QN = {};
 const TOTALQ = CATS.reduce((n, c) => n + c.qs.length, 0);
@@ -111,7 +116,7 @@ function homeLink(slide, dark) {
   // 1. Title
   let s = pres.addSlide({ masterName: "DARK" });
   s.addText("GitHub MCP Server", { x: 0.6, y: 1.5, w: 8.8, h: 0.9, fontSize: 44, bold: true, color: HEX.white, fontFace: "Arial", isTextBox: true, margin: 0 });
-  s.addText("Study guide · steps 1–3", { x: 0.6, y: 2.4, w: 8.8, h: 0.5, fontSize: 22, color: HEX.green, isTextBox: true, margin: 0 });
+  s.addText("Study guide · steps 1–8, complete", { x: 0.6, y: 2.4, w: 8.8, h: 0.5, fontSize: 22, color: HEX.green, isTextBox: true, margin: 0 });
   s.addText("Concepts, code, tools, tests and interview flashcards. Click any link to jump around.", { x: 0.6, y: 3.1, w: 7.5, h: 0.6, fontSize: 14, color: HEX.line, isTextBox: true, margin: 0 });
   s.addText("Start ›", { x: 0.6, y: 4.1, w: 1.6, h: 0.45, shape: pres.shapes.ROUNDED_RECTANGLE, rectRadius: 0.1, fill: { color: HEX.green }, color: HEX.white, bold: true, fontSize: 14, align: "center", hyperlink: { slide: N.contents } });
 
@@ -120,12 +125,12 @@ function homeLink(slide, dark) {
   s.addText("Contents", { placeholder: "title" });
   s.addText("Click a card to jump to that section.", { x: 0.6, y: 0.95, w: 8, h: 0.3, fontSize: 13, color: HEX.muted, isTextBox: true, margin: 0 });
   const toc = [
-    ["Your pitch", "30-second answer", N.pitch, ICONS.pitch, HEX.green],
+    ["Pitch & plan", "Pitch, 8 steps, use cases", N.pitch, ICONS.pitch, HEX.green],
     ["MCP concepts", "Roles, primitives, handshake", N.roles, ICONS.concepts, HEX.purple],
     ["Architecture", "Layers and why", N.arch, ICONS.arch, HEX.blue],
     ["Toolbox", "Every tool and why", N.toolbox, ICONS.tools, HEX.green],
     ["Code tour", "Guards, retries, writes", N.anatomy, ICONS.code, HEX.purple],
-    ["Tests & checks", "43 tests, CI, manual checks", N.tests, ICONS.tests, HEX.blue],
+    ["Tests & checks", "55 tests, CI, Docker", N.tests, ICONS.tests, HEX.blue],
     ["Flashcards", `${TOTALQ} interview questions`, N.cards, ICONS.cards, HEX.green],
     ["Practise", "Checklist before interviews", N.practise, ICONS.check, HEX.purple],
   ];
@@ -141,10 +146,50 @@ function homeLink(slide, dark) {
   // 3. Pitch
   s = pres.addSlide({ masterName: "DARK" });
   s.addText("Your 30-second pitch", { placeholder: "title" });
-  s.addText("“I built an MCP server in Python that gives AI assistants like Claude safe, structured access to GitHub. It searches repositories, fetches details, browses folders and reads source files. I used the official MCP Python SDK, an async httpx client and Pydantic models to keep outputs small and typed. I focused on tool design: clear descriptions, input validation, errors the model can act on, and guards so large or binary files never flood the model’s context. Tests mock GitHub, so they run offline in about a second.”",
-    { x: 0.6, y: 1.3, w: 8.8, h: 3.3, fontSize: 17, italic: true, color: HEX.white, isTextBox: true, margin: 0, valign: "top", lineSpacingMultiple: 1.15 });
+  s.addText("“I built an MCP server in Python that gives AI assistants like Claude safe, structured access to GitHub: searching repositories, reading code, and listing issues and pull requests. It uses all three MCP primitives: tools, a README resource, and prompts such as a pull-request review. I focused on tool design: trimmed typed outputs, clear errors, and guards so big files or long lists never flood the model’s context. It retries failures with backoff, respects rate limits, and its one write tool is off by default and needs user approval. 55 tests mock GitHub, CI runs them on Linux and Windows on every push, and it ships as a Docker image with a token-protected HTTP mode.”",
+    { x: 0.6, y: 1.2, w: 8.8, h: 3.4, fontSize: 15.5, italic: true, color: HEX.white, isTextBox: true, margin: 0, valign: "top", lineSpacingMultiple: 1.15 });
   s.addText("Practise it out loud until you can say it without notes.", { x: 0.6, y: 4.65, w: 8.8, h: 0.35, fontSize: 13, color: HEX.green, isTextBox: true, margin: 0 });
   homeLink(s, true);
+
+  // 3b. Plan
+  s = pres.addSlide({ masterName: "LIGHT" });
+  s.addText("The plan: 8 steps, one commit each", { placeholder: "title" });
+  const plan = [
+    ["1", "Scaffold + server_status", "prove the MCP wiring"],
+    ["2", "GitHub client, search, get", "the pattern every tool reuses"],
+    ["3", "Read folders and files", "guard large and binary output"],
+    ["4", "Issues, PRs, pagination", "bounded cost for an LLM caller"],
+    ["5", "Retries, rate limits", "real networks fail"],
+    ["6", "Resource, prompts, create_issue", "all 3 primitives; safe writes"],
+    ["7", "CI, coverage, Dependabot", "every push checked"],
+    ["8", "HTTP mode, Docker, demo", "run it as a safe service; present it"],
+  ];
+  plan.forEach(([n, what, why], i) => {
+    const col = i % 2, row = Math.floor(i / 2), x = 0.6 + col * 4.5, y = 1.15 + row * 0.9;
+    s.addShape(pres.shapes.OVAL, { x, y: y + 0.08, w: 0.46, h: 0.46, fill: { color: HEX.green } });
+    s.addText(n, { x, y: y + 0.08, w: 0.46, h: 0.46, fontSize: 14, bold: true, color: HEX.white, align: "center", valign: "middle", isTextBox: true, margin: 0 });
+    s.addText([{ text: what, options: { bold: true, color: HEX.night, breakLine: true } }, { text: why, options: { color: HEX.muted } }], { x: x + 0.6, y, w: 3.7, h: 0.66, fontSize: 13, isTextBox: true, margin: 0, valign: "middle" });
+  });
+  s.addText("All 8 steps done, each one a commit on GitHub", { x: 0.6, y: 4.75, w: 8.8, h: 0.3, fontSize: 12, italic: true, color: HEX.green, isTextBox: true, margin: 0 });
+  homeLink(s);
+
+  // 3c. Use cases
+  s = pres.addSlide({ masterName: "LIGHT" });
+  s.addText("Use cases: what a user asks Claude", { placeholder: "title" });
+  const uses = [
+    ["“Is pallets/flask still maintained?”", "get_repository → list_issues"],
+    ["“How does auth work in this repo?”", "list_directory → get_file_contents"],
+    ["“Any good first issues?”", "list_issues, labels = good first issue"],
+    ["Prompt: Review a pull request", "loads description + diffs → review"],
+    ["“Open an issue for this typo”", "user approves → create_issue (if enabled)"],
+    ["“Why did that fail?”", "get_rate_limit → says when it resets"],
+  ];
+  const uhdr = (t) => ({ text: t, options: { bold: true, color: HEX.white, fill: { color: HEX.night } } });
+  s.addTable([[uhdr("The user says"), uhdr("Tools Claude chains")], ...uses.map((r, i) => [
+    { text: r[0], options: { color: HEX.ink, fill: { color: i % 2 ? HEX.soft : HEX.white } } },
+    { text: r[1], options: { color: HEX.purple, fontFace: MONO, fill: { color: i % 2 ? HEX.soft : HEX.white } } }])],
+    { x: 0.6, y: 1.15, w: 8.8, colW: [4.2, 4.6], fontSize: 13, border: { type: "solid", color: HEX.line, pt: 0.5 }, rowH: 0.47 });
+  homeLink(s);
 
   // 4. Roles
   s = pres.addSlide({ masterName: "LIGHT" });
@@ -202,7 +247,7 @@ function homeLink(slide, dark) {
     s.addText(d, { x, y: 2.6, w: 2.0, h: 0.9, fontSize: 13, color: HEX.ink, align: "center", isTextBox: true, margin: 0, valign: "top" });
   });
   s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 0.6, y: 3.75, w: 8.8, h: 1.1, rectRadius: 0.06, fill: { color: HEX.mint } });
-  s.addText(runs("Transport: stdio. The host starts our server as a subprocess and talks over stdin/stdout, so stdout belongs to the protocol. That’s why we never `print()` and log to stderr instead."), { x: 0.85, y: 3.85, w: 8.3, h: 0.9, fontSize: 14, color: HEX.ink, isTextBox: true, margin: 0, valign: "middle" });
+  s.addText(runs("Transport: stdio by default. The host starts our server and talks over stdin/stdout, so we never `print()` and log to stderr. Step 8 adds Streamable HTTP for Docker: same tools, different transport."), { x: 0.85, y: 3.85, w: 8.3, h: 0.9, fontSize: 14, color: HEX.ink, isTextBox: true, margin: 0, valign: "middle" });
   homeLink(s);
 
   // 7. Architecture
@@ -256,7 +301,7 @@ function homeLink(slide, dark) {
     s.addText(n, { x, y: 1.7, w: 2.15, h: 0.9, fontSize: 24, bold: true, color: HEX.green, isTextBox: true, margin: 0, fontFace: "Arial" });
     s.addText(l, { x, y: 2.65, w: 2.0, h: 0.9, fontSize: 13, color: HEX.line, isTextBox: true, margin: 0, valign: "top" });
   });
-  s.addText("43 tests · ~93% coverage (floor 90%) · run by CI on 6 OS × Python combinations", { x: 0.6, y: 4.2, w: 8.8, h: 0.4, fontSize: 15, color: HEX.white, isTextBox: true, margin: 0 });
+  s.addText("55 tests · ~94% coverage (floor 90%) · 2 transports · CI on 6 OS × Python combinations + Docker", { x: 0.6, y: 4.2, w: 8.8, h: 0.4, fontSize: 15, color: HEX.white, isTextBox: true, margin: 0 });
   homeLink(s, true);
 
   // 10. Tool anatomy
@@ -406,6 +451,8 @@ function homeLink(slide, dark) {
     ["Step 4 · issues, PRs, pages", ["PRs dropped from issues; fields trimmed", "state, labels, newest-first sent", "follows Link, stops at limit", "stops at 5 pages", "state=merged rejected", "PR head, base, draft", "PR 404 → tool error", "never follows links to other hosts"]],
     ["Step 5 · retries, rate limits", ["503 then 200 → retried, succeeds", "waits double: 0.5 s, then 1 s", "always 503 → gives up after 3", "timeout → retried", "404 → not retried, no wait", "Retry-After: 2 → waits 2 s", "hourly limit used up → reported, not waited", "plain 403 → not a rate limit", "get_rate_limit maps the budget"]],
     ["Step 6 · prompts, writes", ["README template listed", "README decoded; 404 readable", "prompts listed with arguments", "summary prompt names repo + tools", "review prompt loads PR + diffs", "huge diffs left out, counted", "missing PR → readable error", "create_issue hints all false", "writes off → refused, 0 requests", "POST body title/body/labels", "502 on POST → not retried", "empty title rejected"]],
+    ["Step 8 · HTTP mode", ["tools/list works over HTTP", "a full tool call over HTTP", "no or wrong token → 401", "right token → 200", "/health needs no token", "Host: evil.example → 421", "extra allowed host accepted", "0.0.0.0 without token → refuses", "0.0.0.0 with token → starts", "MCP_* variables parsed", "defaults: stdio, loopback, no token", "main() picks the transport"]],
+    ["Step 8 · Docker, checked", ["image builds (~257 MB)", "runs as uid 10001, not root", "/health answers; Docker says healthy", "no token → refuses to start", "request without token → 401", "server_status says transport: http", "CI repeats build, /health, 401 on every push"]],
   ];
   const groupColors = [HEX.green, HEX.purple, HEX.blue, HEX.green, HEX.purple, HEX.blue];
   const testSlide = (title, groups, offset) => {
@@ -420,8 +467,9 @@ function homeLink(slide, dark) {
     });
     homeLink(s);
   };
-  testSlide("43 tests, and why each exists (1 of 2)", tgroups.slice(0, 3), 0);
-  testSlide("43 tests, and why each exists (2 of 2)", tgroups.slice(3), 3);
+  testSlide("55 tests, and why each exists (1 of 3)", tgroups.slice(0, 3), 0);
+  testSlide("55 tests, and why each exists (2 of 3)", tgroups.slice(3, 6), 3);
+  testSlide("55 tests, and why each exists (3 of 3)", tgroups.slice(6), 0);
 
   // 14. Manual checks
   s = pres.addSlide({ masterName: "LIGHT" });
@@ -440,24 +488,66 @@ function homeLink(slide, dark) {
   const jobs = [
     ["lint", "ruff check + ruff format --check", HEX.purple],
     ["test × 6", "Linux + Windows × Python 3.11, 3.12, 3.13", HEX.blue],
+    ["docker", "build the image, start it, /health, 401 without token", HEX.green],
   ];
-  s.addText("push to main / pull request", { x: 0.6, y: 1.3, w: 2.4, h: 0.6, fontSize: 13, bold: true, color: HEX.white, align: "center", valign: "middle", shape: pres.shapes.ROUNDED_RECTANGLE, rectRadius: 0.08, fill: { color: HEX.night } });
+  s.addText("push to main / pull request", { x: 0.6, y: 1.47, w: 2.4, h: 0.6, fontSize: 13, bold: true, color: HEX.white, align: "center", valign: "middle", shape: pres.shapes.ROUNDED_RECTANGLE, rectRadius: 0.08, fill: { color: HEX.night } });
   jobs.forEach(([h, d, c], i) => {
-    const y = 1.15 + i * 0.75;
-    s.addShape(pres.shapes.LINE, { x: 3.0, y: 1.6, w: 0.5, h: (y + 0.3) - 1.6, line: { color: HEX.muted, width: 1.25, endArrowType: "triangle" } });
-    s.addText([{ text: h + "  ", options: { bold: true, color: HEX.white } }, { text: d, options: { color: HEX.white } }], { x: 3.5, y, w: 5.9, h: 0.6, fontSize: 13, valign: "middle", shape: pres.shapes.ROUNDED_RECTANGLE, rectRadius: 0.08, fill: { color: c }, margin: 8 });
+    const y = 1.15 + i * 0.62, end = y + 0.26, dy = end - 1.77;
+    s.addShape(pres.shapes.LINE, { x: 3.0, y: dy < 0 ? end : 1.77, w: 0.5, h: Math.max(Math.abs(dy), 0.01), flipV: dy < 0, line: { color: HEX.muted, width: 1.25, endArrowType: "triangle" } });
+    s.addText([{ text: h + "  ", options: { bold: true, color: HEX.white } }, { text: d, options: { color: HEX.white } }], { x: 3.5, y, w: 5.9, h: 0.52, fontSize: 13, valign: "middle", shape: pres.shapes.ROUNDED_RECTANGLE, rectRadius: 0.08, fill: { color: c }, margin: 8 });
   });
   const ciwhy = [
     ["uv sync --locked", "exact versions; fails if uv.lock is stale"],
     ["permissions: read", "the run’s token can’t push or change settings"],
-    ["--cov, fail under 90%", "new code must come with tests (~93% now)"],
+    ["--cov, fail under 90%", "new code must come with tests (~94% now)"],
     ["no secrets", "GitHub is mocked, so CI never needs your token"],
     ["Dependabot", "monthly update PRs, each tested by CI"],
   ];
   ciwhy.forEach(([h, d], i) => {
-    const x = 0.6 + (i % 2) * 4.45, y = 2.8 + Math.floor(i / 2) * 0.68;
+    const x = 0.6 + (i % 2) * 4.45, y = 3.1 + Math.floor(i / 2) * 0.62;
     s.addText([{ text: h, options: { bold: true, color: HEX.green, fontFace: MONO, breakLine: true } }, { text: d, options: { color: HEX.ink } }], { x, y, w: 4.3, h: 0.62, fontSize: 12, isTextBox: true, margin: 0, valign: "top" });
   });
+  homeLink(s);
+
+  // 14c. HTTP mode
+  s = pres.addSlide({ masterName: "LIGHT" });
+  s.addText("HTTP mode: three guards", { placeholder: "title" });
+  s.addText(runs("stdio needs no network. HTTP (`MCP_TRANSPORT=http`) lets anyone who reaches the port act with your GitHub token, so:"), { x: 0.6, y: 1.05, w: 8.8, h: 0.5, fontSize: 13, color: HEX.muted, isTextBox: true, margin: 0 });
+  const guards3 = [
+    ["Loopback by default", "Listens on 127.0.0.1 unless told otherwise: only this computer can connect.", HEX.green],
+    ["Bearer token", "Off loopback it refuses to start without MCP_AUTH_TOKEN. Compared with hmac.compare_digest (no timing leak). Wrong token → 401.", HEX.purple],
+    ["Host header check", "Stops DNS rebinding: a web page can’t reach your local server through its own domain. Unknown Host → 421.", HEX.blue],
+  ];
+  guards3.forEach(([h, d, c], i) => {
+    const x = 0.6 + i * 2.97;
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: 1.7, w: 2.8, h: 2.2, rectRadius: 0.06, fill: { color: HEX.soft }, line: { color: c, width: 1.5 } });
+    s.addText(h, { x: x + 0.15, y: 1.82, w: 2.5, h: 0.4, fontSize: 15, bold: true, color: c, isTextBox: true, margin: 0 });
+    s.addText(d, { x: x + 0.15, y: 2.28, w: 2.5, h: 1.55, fontSize: 12, color: HEX.ink, isTextBox: true, margin: 0, valign: "top" });
+  });
+  s.addText([
+    { text: "Stateless + JSON: ", options: { bold: true, color: HEX.night } },
+    { text: "any copy can answer any request, so it scales and survives restarts. ", options: { color: HEX.ink } },
+    { text: "/health: ", options: { bold: true, color: HEX.night } },
+    { text: "no token, no GitHub call, for Docker’s health check.", options: { color: HEX.ink } },
+  ], { x: 0.6, y: 4.1, w: 8.8, h: 0.7, fontSize: 13, isTextBox: true, margin: 0, valign: "top" });
+  homeLink(s);
+
+  // 14d. Docker
+  s = pres.addSlide({ masterName: "LIGHT" });
+  s.addText("The Docker image, and why each choice", { placeholder: "title" });
+  const dk = [
+    ["Multi-stage build", "build with uv, copy only .venv into a fresh slim image"],
+    ["Dependencies first", "cached layer: code edits rebuild in seconds"],
+    ["uv sync --locked --no-dev", "exact versions, no test tools in the image"],
+    ["Non-root user (uid 10001)", "a compromised process can’t change the system"],
+    ["MCP_HOST=0.0.0.0 inside", "container loopback is its own; token then required"],
+    ["-p 127.0.0.1:8000:8000", "port published only on your own machine"],
+    ["HEALTHCHECK on /health", "Docker marks it healthy or unhealthy"],
+    [".dockerignore + --env-file", "the token is never baked into the image"],
+  ];
+  s.addTable([[hdr("Choice"), hdr("Why")], ...dk.map((r, i) => r.map((c, j) => ({ text: c, options: { fontFace: j === 0 ? MONO : undefined, color: j === 0 ? HEX.purple : HEX.ink, fill: { color: i % 2 ? HEX.soft : HEX.white } } })))],
+    { x: 0.6, y: 1.1, w: 8.8, colW: [3.4, 5.4], fontSize: 12, border: { type: "solid", color: HEX.line, pt: 0.5 }, rowH: 0.4 });
+  s.addText("Demo in one command: uv run python scripts/demo.py (add --url http://127.0.0.1:8000/mcp for Docker)", { x: 0.6, y: 4.75, w: 8.8, h: 0.3, fontSize: 11, italic: true, color: HEX.green, isTextBox: true, margin: 0 });
   homeLink(s);
 
   // 15. Flashcards index
@@ -499,8 +589,8 @@ function homeLink(slide, dark) {
   // Practise
   s = pres.addSlide({ masterName: "DARK" });
   s.addText("Before your interview", { placeholder: "title" });
-  const pr = ["Say the 30-second pitch without notes", "Draw the architecture from memory", "Explain initialize → tools/list → tools/call", "Explain get_paginated and the retry loop", "Explain the five safety layers of create_issue", `Answer all ${TOTALQ} flashcards out loud`];
-  s.addText(pr.map((t, i) => ({ text: "☐  " + t, options: { breakLine: i < pr.length - 1 } })), { x: 0.6, y: 1.3, w: 8.8, h: 3.4, fontSize: 18, color: HEX.white, isTextBox: true, margin: 0, valign: "top", paraSpaceAfter: 8 });
+  const pr = ["Say the 30-second pitch without notes", "Draw the architecture from memory", "Explain initialize → tools/list → tools/call", "Explain get_paginated and the retry loop", "Explain the five safety layers of create_issue", "Explain the HTTP guards and the Dockerfile", `Answer all ${TOTALQ} flashcards out loud`];
+  s.addText(pr.map((t, i) => ({ text: "☐  " + t, options: { breakLine: i < pr.length - 1 } })), { x: 0.6, y: 1.25, w: 8.8, h: 3.4, fontSize: 17, color: HEX.white, isTextBox: true, margin: 0, valign: "top", paraSpaceAfter: 6 });
   s.addText("Full detail, including every file of code: STUDY-GUIDE.pdf", { x: 0.6, y: 4.7, w: 8.8, h: 0.35, fontSize: 13, color: HEX.green, isTextBox: true, margin: 0 });
   homeLink(s, true);
 

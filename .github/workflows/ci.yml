@@ -52,3 +52,26 @@ jobs:
         run: uv sync --locked
       - name: Run tests with coverage (fails under 90%)
         run: uv run pytest --cov --cov-report=term-missing
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t github-mcp .
+      - name: Start it and wait for /health
+        run: |
+          docker run -d --name mcp -e MCP_AUTH_TOKEN=ci-only -p 127.0.0.1:8000:8000 github-mcp
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8000/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs mcp
+          exit 1
+      - name: Refuses requests without the bearer token
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:8000/mcp \
+            -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
+          test "$code" = "401"

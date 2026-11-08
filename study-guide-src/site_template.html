@@ -1,0 +1,442 @@
+<title>GitHub MCP Server Study Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: sticky sidebar (views + search) beside one reading column; views switch on the URL hash.
+   Palette borrows from a git diff: added-line green as the accent, removed-line red only for warnings. */
+:root {
+  --bg: #f6f7f5;
+  --surface: #ffffff;
+  --sunken: #eef1ee;
+  --ink: #18201c;
+  --muted: #5a6660;
+  --line: #dbe1dc;
+  --accent: #19774a;
+  --accent-soft: #e2f2e8;
+  --warn: #b03f2a;
+  --code-bg: #f1f4f1;
+  --c-kw: #a3285c; --c-st: #19774a; --c-co: #7b8780; --c-fu: #2556a8; --c-dv: #9a5a00; --c-op: #4a5650;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --side: 268px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111513; --surface: #171c19; --sunken: #1d2420; --ink: #e2e8e4; --muted: #95a39c;
+    --line: #2a332e; --accent: #55c48d; --accent-soft: #1b3326; --warn: #ef8a72; --code-bg: #0d110f;
+    --c-kw: #f08bb4; --c-st: #7fd6a6; --c-co: #75837c; --c-fu: #8ab4f8; --c-dv: #f0b45c; --c-op: #b8c4be;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111513; --surface: #171c19; --sunken: #1d2420; --ink: #e2e8e4; --muted: #95a39c;
+  --line: #2a332e; --accent: #55c48d; --accent-soft: #1b3326; --warn: #ef8a72; --code-bg: #0d110f;
+  --c-kw: #f08bb4; --c-st: #7fd6a6; --c-co: #75837c; --c-fu: #8ab4f8; --c-dv: #f0b45c; --c-op: #b8c4be;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-padding-top: 16px; }
+body { background: var(--bg); color: var(--ink); font: 16px/1.6 var(--font-body); margin: 0; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, pre, kbd { font-family: var(--font-mono); font-size: 0.88em; }
+
+.shell { display: grid; grid-template-columns: var(--side) minmax(0, 1fr); min-height: 100vh; }
+
+/* Sidebar */
+.side {
+  position: sticky; top: env(safe-area-inset-top, 0px); align-self: start; height: 100vh; overflow-y: auto;
+  padding-block: 24px; padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: 16px;
+  border-right: 1px solid var(--line); background: var(--surface);
+  display: flex; flex-direction: column; gap: 18px;
+}
+.brand { font-family: var(--font-display); font-weight: 700; font-size: 20px; line-height: 1.15; letter-spacing: -0.01em; }
+.brand small { display: block; font: 500 12px/1.4 var(--font-mono); color: var(--muted); letter-spacing: 0.02em; margin-top: 6px; }
+.search { position: relative; }
+.search input {
+  width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--sunken); color: var(--ink); font: inherit; font-size: 14px;
+}
+.views { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.views > li > a {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 7px 10px; border-radius: 7px;
+  color: var(--ink); text-decoration: none; font-weight: 500; font-size: 15px;
+}
+.views > li > a span { font: 12px var(--font-mono); color: var(--muted); }
+.views > li > a:hover { background: var(--sunken); }
+.views > li > a[aria-current="page"] { background: var(--accent-soft); color: var(--accent); }
+.subnav { list-style: none; margin: 2px 0 6px; padding: 0 0 0 12px; border-left: 1px solid var(--line); margin-left: 12px; }
+.subnav a { display: block; padding: 3px 8px; font-size: 13.5px; color: var(--muted); text-decoration: none; border-radius: 5px; }
+.subnav a:hover { color: var(--ink); background: var(--sunken); }
+.side-foot { margin-top: auto; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.side-foot a { color: var(--muted); }
+
+/* Main */
+main { min-width: 0; padding-block: 32px 80px; padding-left: max(16px, 4vw); padding-right: max(16px, env(safe-area-inset-right, 0px), 4vw); }
+.view { max-width: 860px; }
+.eyebrow { font: 500 12px var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin: 0 0 8px; }
+h1, h2, h3, h4 { font-family: var(--font-display); line-height: 1.2; text-wrap: balance; letter-spacing: -0.01em; }
+h1.view-title { font-size: clamp(30px, 4.5vw, 44px); margin: 0 0 12px; }
+.lede { font-size: 18px; color: var(--muted); max-width: 64ch; margin: 0 0 24px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+button { font: inherit; cursor: pointer; }
+.btn {
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px;
+  padding: 7px 14px; font-size: 14px; font-weight: 500;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+
+/* Prose from markdown */
+.prose { max-width: 75ch; }
+.prose h1 { font-size: 26px; margin: 36px 0 10px; }
+.prose h2 { font-size: 23px; margin: 36px 0 10px; padding-top: 8px; }
+.prose h3 { font-size: 18.5px; margin: 26px 0 8px; }
+.prose h4 { font-size: 16px; margin: 20px 0 6px; }
+.prose p, .prose li { max-width: 72ch; }
+.prose li + li { margin-top: 4px; }
+.prose blockquote { margin: 16px 0; padding: 10px 18px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; }
+.prose blockquote p { margin: 0; }
+.prose :not(pre) > code { background: var(--sunken); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+.prose table { border-collapse: collapse; font-size: 14.5px; margin: 14px 0; width: 100%; }
+.table-wrap { overflow-x: auto; max-width: 100%; }
+.prose th, .prose td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+.prose th { font-weight: 600; background: var(--sunken); }
+div.sourceCode, .prose > pre, .code-wrap pre {
+  position: relative; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+  margin: 14px 0; overflow-x: auto;
+}
+pre.sourceCode, .prose > pre { margin: 0; padding: 14px 16px; line-height: 1.55; font-size: 13.5px; }
+.prose > pre { padding: 14px 16px; }
+pre code { font-size: inherit; }
+pre.sourceCode a { display: none; }
+code span.kw, code span.cf, code span.im, code span.at { color: var(--c-kw); }
+code span.st, code span.ss, code span.vs, code span.ch, code span.sc { color: var(--c-st); }
+code span.co, code span.do, code span.an, code span.cv, code span.in { color: var(--c-co); font-style: italic; }
+code span.fu, code span.bu, code span.dt, code span.ex { color: var(--c-fu); }
+code span.dv, code span.bn, code span.fl, code span.cn { color: var(--c-dv); }
+code span.op, code span.ot, code span.pp { color: var(--c-op); }
+code span.al, code span.er, code span.wa { color: var(--warn); }
+.copy {
+  position: absolute; top: 8px; right: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+  border-radius: 6px; font-size: 12px; padding: 3px 8px; opacity: 0; transition: opacity .15s;
+}
+div.sourceCode:hover .copy, div.sourceCode:focus-within .copy, .copy.done { opacity: 1; }
+@media (hover: none) { .copy { opacity: 1; } }
+
+/* Overview */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 8px 0 32px; }
+.stat { background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
+.stat b { font: 700 26px/1.1 var(--font-display); color: var(--accent); font-variant-numeric: tabular-nums; }
+.stat span { font-size: 13px; color: var(--muted); }
+.arch { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin: 10px 0 28px; max-width: 640px; }
+.arch .box { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 16px; }
+.arch .box h4 { margin: 0 0 4px; font-size: 15px; }
+.arch .box p { margin: 0; font-size: 14px; color: var(--muted); }
+.arch .server { border-color: var(--accent); }
+.arch .layers { display: grid; gap: 6px; margin-top: 10px; }
+.arch .layer { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; font-size: 13.5px; background: var(--sunken); border-radius: 6px; padding: 6px 10px; }
+.arch .layer code { color: var(--accent); }
+.arch .wire { text-align: center; font: 12px var(--font-mono); color: var(--muted); padding: 6px 0; }
+.arch .wire::before { content: "↕ "; }
+
+/* Steps and files */
+details.step, details.file { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; margin: 0 0 10px; }
+details.step > summary, details.file > summary { cursor: pointer; list-style: none; padding: 14px 18px; display: grid; gap: 2px 14px; }
+details.step > summary::-webkit-details-marker, details.file > summary::-webkit-details-marker { display: none; }
+details.step > summary { grid-template-columns: auto minmax(0, 1fr); }
+.step-num { font: 500 12px var(--font-mono); color: var(--accent); text-transform: uppercase; letter-spacing: .06em; padding-top: 5px; grid-row: span 2; }
+.step-title { font: 700 19px/1.25 var(--font-display); }
+.step-goal { color: var(--muted); font-size: 14.5px; }
+details.step[open] > summary { border-bottom: 1px solid var(--line); }
+details.step > .prose { padding: 4px 18px 6px; }
+.src-note { padding: 0 18px 14px; margin: 0; font-size: 13px; color: var(--muted); }
+details.file > summary { grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto; align-items: baseline; }
+details.file .path { font-weight: 500; color: var(--ink); overflow-wrap: anywhere; }
+details.file .role { color: var(--muted); font-size: 14px; }
+details.file .lines { font: 12px var(--font-mono); color: var(--muted); white-space: nowrap; }
+details.file .code-wrap { padding: 0 12px 12px; }
+details.file .code-wrap div.sourceCode { margin: 0; }
+summary:hover .step-title, summary:hover .path { color: var(--accent); }
+
+/* Deep dive */
+.deep { scroll-margin-top: 16px; }
+.part-title { font-size: 30px; margin: 48px 0 6px; padding-top: 18px; border-top: 1px solid var(--line); }
+.deep:first-of-type .part-title { margin-top: 8px; border-top: 0; }
+
+/* Practice */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; }
+.chip { border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 999px; padding: 4px 12px; font-size: 13px; }
+.chip.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.card {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 14px; padding: 26px 28px 22px;
+  min-height: 300px; display: flex; flex-direction: column; gap: 14px; max-width: 720px;
+}
+.card-meta { display: flex; justify-content: space-between; gap: 12px; font: 12px var(--font-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; flex-wrap: wrap; }
+.card-meta .known-tag { color: var(--accent); }
+.card-q { font: 600 clamp(21px, 2.6vw, 26px)/1.3 var(--font-display); margin: 0; text-wrap: balance; }
+.card-a { font-size: 16.5px; border-top: 1px dashed var(--line); padding-top: 14px; margin: 0; }
+.card-a code, .card-q code { background: var(--sunken); padding: 1px 5px; border-radius: 4px; }
+.card-actions { margin-top: auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.card-actions .spacer { flex: 1; }
+.progress { font-size: 14px; color: var(--muted); margin: 12px 0 0; font-variant-numeric: tabular-nums; }
+.bar { height: 6px; background: var(--sunken); border-radius: 99px; overflow: hidden; max-width: 720px; margin-top: 6px; }
+.bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+.keys { font-size: 13px; color: var(--muted); margin-top: 10px; }
+kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface); font-size: 12px; }
+.checklist { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; max-width: 720px; }
+.checklist label { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer; }
+.checklist input { margin-top: 4px; accent-color: var(--accent); }
+.checklist input:checked + span { color: var(--muted); text-decoration: line-through; }
+
+/* Search results */
+.results { position: absolute; left: 0; right: -260px; top: calc(100% + 6px); z-index: 20; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgb(0 0 0 / .15); max-height: 60vh; overflow-y: auto; padding: 6px; }
+.results button { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--ink); padding: 8px 10px; border-radius: 6px; font-size: 14px; }
+.results button:hover, .results button:focus { background: var(--sunken); }
+.results small { display: block; color: var(--muted); font-size: 12px; }
+.results mark { background: var(--accent-soft); color: var(--accent); }
+.results .none { padding: 10px; color: var(--muted); font-size: 14px; }
+.flash { animation: flash 1.6s ease-out; border-radius: 4px; }
+@keyframes flash { 0%, 40% { background: var(--accent-soft); } 100% { background: transparent; } }
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .views { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .subnav, .side-foot, .views > li > a span { display: none; }
+  .results { right: 0; }
+  main { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  details.file > summary { grid-template-columns: minmax(0, 1fr) auto; }
+  details.file .role { grid-column: 1 / -1; grid-row: 2; }
+  .arch .layer { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .card { padding: 20px 18px; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="shell">
+  <aside class="side">
+    <div class="brand">GitHub MCP Server<small>Study guide · how it was built</small></div>
+    <div class="search">
+      <label for="q" class="eyebrow" style="display:block">Search everything</label>
+      <input id="q" type="search" placeholder="e.g. jitter, lifespan, 404" autocomplete="off">
+      <div class="results" id="results" hidden></div>
+    </div>
+    <nav aria-label="Sections">
+      <ul class="views">
+        <li><a href="#overview" data-view="overview">Overview <span>pitch · plan · uses</span></a></li>
+        <li><a href="#build" data-view="build">Build log <span>step by step</span></a>
+          <ul class="subnav">{{NAV_STEPS}}</ul></li>
+        <li><a href="#guide" data-view="guide">Deep dive <span>concepts · code</span></a>
+          <ul class="subnav">{{NAV_DEEP}}</ul></li>
+        <li><a href="#code" data-view="code">Source code <span>every file</span></a></li>
+        <li><a href="#practice" data-view="practice">Interview practice <span>flashcards</span></a></li>
+      </ul>
+    </nav>
+    <div class="side-foot">Code: <a href="https://github.com/prasad976999/github-mcp-server" target="_blank" rel="noopener">github.com/prasad976999/github-mcp-server</a><br>Also as STUDY-GUIDE.pdf and .pptx in <code>docs/</code>.</div>
+  </aside>
+
+  <main>
+    <section class="view" id="view-overview" data-view="overview">
+      <p class="eyebrow">Portfolio project · Python · MCP · GitHub API</p>
+      <h1 class="view-title">An MCP server that gives Claude safe, structured access to GitHub</h1>
+      <p class="lede">Built step by step with the official MCP Python SDK. This guide covers the plan, every step, the code line by line, the tests, and the questions you'll be asked about it.</p>
+      <div class="stats">{{STATS}}</div>
+
+      <h2>How the pieces fit</h2>
+      <div class="arch" aria-label="Architecture diagram">
+        <div class="box"><h4>Host: Claude Desktop, Claude Code or the MCP Inspector</h4><p>The app the user talks to. It starts the server (stdio) or connects to it over HTTP, and calls its tools.</p></div>
+        <div class="wire">JSON-RPC over stdio, or HTTP with a bearer token (Docker)</div>
+        <div class="box server"><h4>github-mcp server (this project)</h4>
+          <div class="layers">
+            <div class="layer"><code>server.py</code><span>MCP layer: 9 tools, 1 resource, 2 prompts, validation, errors for the model</span></div>
+            <div class="layer"><code>github_client.py</code><span>HTTP layer: auth, retries with backoff, rate limits, pagination</span></div>
+            <div class="layer"><code>models.py</code><span>What the model sees: trimmed, typed outputs</span></div>
+            <div class="layer"><code>config.py</code><span>Settings and secrets from the environment</span></div>
+            <div class="layer"><code>http_app.py</code><span>HTTP mode: bearer token, Host check, /health</span></div>
+          </div></div>
+        <div class="wire">HTTPS with a read-only token</div>
+        <div class="box"><h4>GitHub REST API</h4><p>api.github.com: repositories, contents, issues, pull requests, rate limit.</p></div>
+      </div>
+
+      <h2>Where the project stands</h2>
+      <div class="prose">{{PROGRESS}}</div>
+      <div class="prose">{{OVERVIEW}}</div>
+    </section>
+
+    <section class="view" id="view-build" data-view="build" hidden>
+      <p class="eyebrow">Build log</p>
+      <h1 class="view-title">How it was built, step by step</h1>
+      <p class="lede">Each step ended with working code, passing tests and one git commit. Open a step to see what was built, why, the code, the tests and that step's interview questions.</p>
+      <div class="toolbar"><button type="button" class="btn" data-expand="step">Open all</button><button type="button" class="btn" data-collapse="step">Close all</button></div>
+      {{STEPS}}
+    </section>
+
+    <section class="view" id="view-guide" data-view="guide" hidden>
+      <p class="eyebrow">Deep dive</p>
+      <h1 class="view-title">Concepts, architecture and the code explained</h1>
+      <p class="lede">The full reference: MCP concepts, why each tool and library was chosen, every file explained line by line, the tests and checks, and the commands you used.</p>
+      {{DEEP}}
+    </section>
+
+    <section class="view" id="view-code" data-view="code" hidden>
+      <p class="eyebrow">Source code</p>
+      <h1 class="view-title">Every file in the repository</h1>
+      <p class="lede">The exact code as committed. Open a file to read it; the Deep dive explains each one line by line.</p>
+      <div class="toolbar"><button type="button" class="btn" data-expand="file">Open all</button><button type="button" class="btn" data-collapse="file">Close all</button></div>
+      {{FILES}}
+    </section>
+
+    <section class="view" id="view-practice" data-view="practice" hidden>
+      <p class="eyebrow">Interview practice</p>
+      <h1 class="view-title">Answer out loud, then check</h1>
+      <p class="lede">Read the question, say your answer, then reveal the model answer. Mark the ones you know; your progress stays in this browser.</p>
+      <div class="chips" id="cats" role="group" aria-label="Topic">{{CATS}}</div>
+      <article class="card" id="card" aria-live="polite">
+        <div class="card-meta"><span id="card-cat"></span><span id="card-n"></span></div>
+        <p class="card-q" id="card-q"></p>
+        <div class="card-a" id="card-a" hidden></div>
+        <div class="card-actions">
+          <button type="button" class="btn primary" id="reveal">Show answer</button>
+          <button type="button" class="btn" id="known">I knew this</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn" id="prev" aria-label="Previous question">‹ Prev</button>
+          <button type="button" class="btn" id="next" aria-label="Next question">Next ›</button>
+          <button type="button" class="btn" id="shuffle">Shuffle</button>
+        </div>
+      </article>
+      <p class="progress" id="progress"></p>
+      <div class="bar"><i id="bar"></i></div>
+      <p class="keys">Keys: <kbd>Space</kbd> show answer · <kbd>←</kbd> <kbd>→</kbd> previous / next · <kbd>K</kbd> mark known</p>
+
+      <h2 style="margin-top:40px">Before the interview</h2>
+      <ul class="checklist">{{CHECKLIST}}</ul>
+    </section>
+  </main>
+</div>
+
+<script>
+const CARDS = {{CARDS_JSON}};
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("ghmcp:" + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("ghmcp:" + k, JSON.stringify(v)); } catch {} },
+};
+
+/* Views */
+const VIEWS = ["overview", "build", "guide", "code", "practice"];
+function showView(name) {
+  if (!VIEWS.includes(name)) name = "overview";
+  document.querySelectorAll("section.view").forEach(s => { s.hidden = s.dataset.view !== name; });
+  document.querySelectorAll(".views > li > a").forEach(a => a.toggleAttribute("aria-current", a.dataset.view === name) && a.setAttribute("aria-current", "page"));
+  return document.getElementById("view-" + name);
+}
+function route() { const v = showView(location.hash.slice(1)); window.scrollTo(0, 0); return v; }
+window.addEventListener("hashchange", route);
+route();
+
+function reveal(el) {
+  const view = el.closest("section.view");
+  if (view && view.hidden) { history.replaceState(null, "", "#" + view.dataset.view); showView(view.dataset.view); }
+  for (let d = el.closest("details"); d; d = d.parentElement.closest("details")) d.open = true;
+  el.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+}
+document.querySelectorAll(".subnav a").forEach(a => a.addEventListener("click", e => {
+  e.preventDefault();
+  const el = document.getElementById(a.dataset.target);
+  if (el) { history.replaceState(null, "", a.getAttribute("href")); showView(a.getAttribute("href").slice(1)); reveal(el); }
+}));
+document.querySelectorAll("[data-expand]").forEach(b => b.addEventListener("click", () => document.querySelectorAll("details." + b.dataset.expand).forEach(d => d.open = true)));
+document.querySelectorAll("[data-collapse]").forEach(b => b.addEventListener("click", () => document.querySelectorAll("details." + b.dataset.collapse).forEach(d => d.open = false)));
+
+/* Tables scroll inside their own box on small screens */
+document.querySelectorAll(".prose table").forEach(t => { const w = document.createElement("div"); w.className = "table-wrap"; t.replaceWith(w); w.appendChild(t); });
+
+/* Copy buttons on code */
+document.querySelectorAll("div.sourceCode").forEach(box => {
+  const b = document.createElement("button"); b.type = "button"; b.className = "copy"; b.textContent = "Copy";
+  b.addEventListener("click", async () => {
+    const text = box.querySelector("code").innerText;
+    try { await navigator.clipboard.writeText(text); b.textContent = "Copied"; }
+    catch { const r = document.createRange(); r.selectNodeContents(box.querySelector("code")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = "Selected"; }
+    b.classList.add("done"); setTimeout(() => { b.textContent = "Copy"; b.classList.remove("done"); }, 1600);
+  });
+  box.appendChild(b);
+});
+
+/* Search */
+const LABEL = { overview: "Overview", build: "Build log", guide: "Deep dive", code: "Source code", practice: "Practice" };
+let n = 0;
+const index = [...document.querySelectorAll("section.view h2, section.view h3, section.view h4, section.view p, section.view li, section.view td, details.file summary")]
+  .filter(el => !el.closest(".card, .results"))
+  .map(el => { if (!el.id) el.id = "x" + (n++); return { el, text: el.textContent.replace(/\s+/g, " ").trim(), head: /^H\d$/.test(el.tagName), view: el.closest("section.view").dataset.view }; })
+  .filter(e => e.text.length > 2);
+const q = document.getElementById("q"), results = document.getElementById("results");
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function context(el) {
+  const step = el.closest("details.step"); if (step) return step.querySelector(".step-title").textContent;
+  const deep = el.closest(".deep"); if (deep) return deep.querySelector(".part-title").textContent;
+  const f = el.closest("details.file"); if (f) return f.querySelector(".path").textContent;
+  return "";
+}
+q.addEventListener("input", () => {
+  const term = q.value.trim().toLowerCase();
+  if (term.length < 2) { results.hidden = true; return; }
+  const hits = index.filter(e => e.text.toLowerCase().includes(term)).sort((a, b) => b.head - a.head).slice(0, 40);
+  results.innerHTML = hits.length ? "" : '<div class="none">No matches. Try a shorter word.</div>';
+  for (const h of hits) {
+    const i = h.text.toLowerCase().indexOf(term), start = Math.max(0, i - 40);
+    const snip = (start ? "…" : "") + esc(h.text.slice(start, i)) + "<mark>" + esc(h.text.slice(i, i + term.length)) + "</mark>" + esc(h.text.slice(i + term.length, i + term.length + 70)) + "…";
+    const b = document.createElement("button"); b.type = "button";
+    b.innerHTML = snip + "<small>" + LABEL[h.view] + (context(h.el) ? " · " + esc(context(h.el)) : "") + "</small>";
+    b.addEventListener("click", () => { results.hidden = true; reveal(h.el); });
+    results.appendChild(b);
+  }
+  results.hidden = false;
+});
+q.addEventListener("keydown", e => { if (e.key === "Escape") { q.value = ""; results.hidden = true; } if (e.key === "ArrowDown") results.querySelector("button")?.focus(); });
+document.addEventListener("click", e => { if (!e.target.closest(".search")) results.hidden = true; });
+
+/* Flashcards */
+let cat = "", deck = CARDS.slice(), pos = 0, shown = false;
+const known = new Set(store.get("known", []));
+const $ = id => document.getElementById(id);
+function render() {
+  const c = deck[pos];
+  $("card-cat").textContent = c.cat;
+  $("card-n").textContent = "Q" + c.n + (known.has(c.n) ? " · " : "");
+  if (known.has(c.n)) { const t = document.createElement("span"); t.className = "known-tag"; t.textContent = "known"; $("card-n").appendChild(t); }
+  $("card-q").innerHTML = c.q; $("card-a").innerHTML = c.a; $("card-a").hidden = !shown;
+  $("reveal").textContent = shown ? "Hide answer" : "Show answer";
+  $("known").textContent = known.has(c.n) ? "Mark not known" : "I knew this";
+  const k = deck.filter(d => known.has(d.n)).length;
+  $("progress").textContent = `Card ${pos + 1} of ${deck.length} · ${k} of ${deck.length} known` + (cat ? " in this topic" : "");
+  $("bar").style.width = (100 * k / deck.length) + "%";
+}
+function go(d) { pos = (pos + d + deck.length) % deck.length; shown = false; render(); }
+$("reveal").onclick = () => { shown = !shown; render(); };
+$("next").onclick = () => go(1);
+$("prev").onclick = () => go(-1);
+$("shuffle").onclick = () => { for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; } pos = 0; shown = false; render(); };
+$("known").onclick = () => { const c = deck[pos]; known.has(c.n) ? known.delete(c.n) : known.add(c.n); store.set("known", [...known]); render(); };
+document.querySelectorAll("#cats .chip").forEach(b => b.addEventListener("click", () => {
+  cat = b.dataset.cat; document.querySelectorAll("#cats .chip").forEach(x => x.classList.toggle("on", x === b));
+  deck = CARDS.filter(c => !cat || c.cat === cat); pos = 0; shown = false; render();
+}));
+document.addEventListener("keydown", e => {
+  if ($("view-practice").hidden || e.target.closest("input, textarea, button")) return;
+  if (e.key === " ") { e.preventDefault(); $("reveal").click(); }
+  else if (e.key === "ArrowRight") go(1); else if (e.key === "ArrowLeft") go(-1);
+  else if (e.key.toLowerCase() === "k") $("known").click();
+});
+render();
+
+/* Checklist */
+document.querySelectorAll(".checklist input").forEach(cb => {
+  cb.checked = !!store.get(cb.dataset.key, false);
+  cb.addEventListener("change", () => store.set(cb.dataset.key, cb.checked));
+});
+</script>

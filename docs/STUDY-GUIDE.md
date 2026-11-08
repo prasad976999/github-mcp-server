@@ -1,20 +1,20 @@
 ---
 title: "GitHub MCP Server — Study Guide"
-subtitle: "Everything built in steps 1–7: concepts, code walkthrough, commands and interview answers"
+subtitle: "The complete project, steps 1–8: plan, concepts, code walkthrough, commands and interview answers"
 ---
 
 # How to use this guide
 
-This guide covers the whole project so far: what it does, the concepts behind it, **every file of code explained line by line**, every command you ran, and interview questions with model answers. It is updated after each step.
+This guide covers the whole project so far: what it does, the concepts behind it, **every file of code explained line by line**, every command you ran, and interview questions with model answers. The project is complete: all 8 steps are built, tested and documented.
 
 Suggested study order:
 
-1. Read **Part 1** and practise the pitch out loud.
+1. Read **Part 1** (pitch, plan, use cases) and practise the pitch out loud.
 2. Read **Part 2** (concepts) until you can explain each term without notes.
 3. Work through **Part 4** (code walkthrough) with the real files open in VS Code.
 4. Test yourself with **Part 6** (interview questions). Cover the answer, say yours, then compare.
 
-**Progress:** steps 1–7 of 8 complete.
+**Progress:** all 8 steps complete.
 
 | Step | What was built | Status |
 |---|---|---|
@@ -24,24 +24,65 @@ Suggested study order:
 | 4 | `list_issues`, `list_pull_requests`, safe pagination | Done, 21 tests pass on your laptop, committed |
 | 5 | Retries with backoff, rate-limit handling, `get_rate_limit` | Done, 30 tests pass on your laptop, committed |
 | 6 | README resource, two prompts, `create_issue` (off by default) | Done, 43 tests pass on your laptop, committed |
-| 7 | GitHub Actions CI, coverage floor, stricter linting, Dependabot | Built, all checks pass locally; runs on GitHub once pushed |
-| 8 | Docker, HTTP transport, README polish, demo | Coming next |
+| 7 | GitHub Actions CI, coverage floor, stricter linting, Dependabot | Done, committed, pushed to GitHub |
+| 8 | Docker, Streamable HTTP with a bearer token, README polish, demo script | Done, 55 tests pass |
 
 # Part 1. Your project in one minute
 
 ## The 30-second pitch
 
-> "I built an MCP server in Python that gives AI assistants like Claude safe, structured access to GitHub. It can search repositories, fetch details, browse folders, read source files, and list issues and pull requests. It uses all three MCP primitives: tools, a README resource, and prompts for summarising a repository and reviewing a pull request. I used the official MCP Python SDK, an async httpx client for the GitHub REST API, and Pydantic models to keep outputs small and typed. I focused on tool design: clear names and descriptions, input validation, error messages the model can act on, and guards so large files or long lists never flood the model's context. It retries temporary failures with exponential backoff and handles GitHub's rate limits without hanging. Its one write tool, `create_issue`, is off by default, marked as non-read-only so hosts ask the user first, and never retried blindly. It's covered by tests that mock GitHub, so they run offline in about two seconds, and GitHub Actions runs lint and the tests on Linux and Windows across three Python versions on every push, with a 90% coverage floor."
+> "I built an MCP server in Python that gives AI assistants like Claude safe, structured access to GitHub. It can search repositories, fetch details, browse folders, read source files, and list issues and pull requests. It uses all three MCP primitives: tools, a README resource, and prompts for summarising a repository and reviewing a pull request. I used the official MCP Python SDK, an async httpx client for the GitHub REST API, and Pydantic models to keep outputs small and typed. I focused on tool design: clear names and descriptions, input validation, error messages the model can act on, and guards so large files or long lists never flood the model's context. It retries temporary failures with exponential backoff and handles GitHub's rate limits without hanging. Its one write tool, `create_issue`, is off by default, marked as non-read-only so hosts ask the user first, and never retried blindly. It's covered by tests that mock GitHub, so they run offline in about two seconds, and GitHub Actions runs lint and the tests on Linux and Windows across three Python versions on every push, with a 90% coverage floor. It runs locally over stdio, or as a Docker container serving Streamable HTTP, protected by a bearer token and DNS rebinding checks."
 
 ## The 2-minute walkthrough
 
 When an interviewer says *"walk me through your project"*:
 
 1. **What MCP is.** An open protocol that standardises how AI applications connect to tools and data. You wrap a service once as an MCP server, and any MCP host can use it.
-2. **Architecture.** The host (Claude Desktop or Claude Code) launches my server as a subprocess and talks JSON-RPC over stdin/stdout. My server has three layers: the MCP layer (`server.py`) defines the tools, the API layer (`github_client.py`) does HTTP, and the models layer (`models.py`) shapes what the model sees.
+2. **Architecture.** The host (Claude Desktop or Claude Code) launches my server as a subprocess and talks JSON-RPC over stdin/stdout. It can also run as an HTTP service in Docker, with the same tools. My server has three layers: the MCP layer (`server.py`) defines the tools, the API layer (`github_client.py`) does HTTP, and the models layer (`models.py`) shapes what the model sees.
 3. **Tools.** `search_repositories`, `get_repository`, `list_directory`, `get_file_contents`, `list_issues`, `list_pull_requests`, `get_rate_limit`, `server_status`, and the write tool `create_issue`. Plus a **resource** (`github://repos/{owner}/{repo}/readme`) and two **prompts** (`summarize_repository`, `review_pull_request`).
 4. **Engineering decisions.** One shared async HTTP client created in the server's lifespan; outputs trimmed from ~100 fields to ~13; pagination that follows GitHub's `Link` headers with a 5-page cap; files cut off at a limit with an explicit `truncated` flag; network errors and 5xx retried with exponential backoff and jitter, rate limits waited out only when the wait is short; writes off by default and never retried after a 5xx; every failure turned into a readable tool error; a fine-grained read-only token loaded from the environment.
-5. **Testing.** `pytest` with `respx` to fake GitHub (including 404s, timeouts, server errors, rate limits, binary and oversized files), calling tools through the SDK's in-process client exactly as a real host would. CI on GitHub Actions runs lint and tests on 2 operating systems × 3 Python versions on every push and pull request, and fails if coverage drops below 90%.
+5. **Testing.** `pytest` with `respx` to fake GitHub (including 404s, timeouts, server errors, rate limits, binary and oversized files), calling tools through the SDK's in-process client exactly as a real host would. CI on GitHub Actions runs lint and tests on 2 operating systems × 3 Python versions on every push and pull request, fails if coverage drops below 90%, and builds and starts the Docker image.
+6. **Deployment.** A multi-stage Docker image running as a non-root user with a health check. In HTTP mode the server listens on loopback by default, refuses to listen anywhere else without a bearer token, and rejects unknown Host headers.
+
+## The plan, and how it was built
+
+The project was planned as **8 steps**. Each step ends with working code, a passing test suite, an explainer (`docs/step-NN.md`) and **one git commit**, so the history on GitHub tells the story of how it grew.
+
+| Step | What was built | Why at this point | Commit |
+|---|---|---|---|
+| 1 | Project scaffold (uv, src layout), config, one `server_status` tool, first test | Prove the MCP wiring end to end before touching GitHub | (in the step 2 commit) |
+| 2 | Async GitHub client in the lifespan, trimmed models, `search_repositories`, `get_repository`, error mapping | The core pattern every later tool reuses | `9d1415b` |
+| 3 | `list_directory`, `get_file_contents`: base64, binary detection, truncation, 1 MB limit | Reading code is the main use case; large outputs must be guarded | `dbb5e7b` |
+| 4 | `get_paginated` (Link headers, 5-page cap, same-host check), `list_issues`, `list_pull_requests` | Lists span pages; an LLM caller must have bounded cost | `b0f0784` |
+| 5 | Retries with exponential backoff and jitter, rate-limit handling, `get_rate_limit` | Real networks fail and GitHub limits requests | `06cdd5a` |
+| 6 | README resource, two prompts, `create_issue` behind five safety layers | Cover all three MCP primitives; writes need extra care | `3f365e9` |
+| 7 | GitHub Actions CI (lint + 6-way test matrix), coverage floor, stricter lint, Dependabot | Every change is checked automatically on a clean machine | `1e18317` |
+| 8 | Streamable HTTP mode (bearer token, Host checks, `/health`), Docker image, Docker CI job, README, demo script | Run it as a service, safely, and present it well | step 8 commit |
+
+**The order is deliberate:** wiring first, then one complete vertical slice (client → model → tool → test), then features that reuse that slice, then robustness (pagination, retries), then the riskier write path, then automation, then deployment. Each step only adds; nothing had to be rewritten.
+
+**By the numbers:** 9 tools, 1 resource template, 2 prompts, 2 transports, 55 automated tests, about 94% code coverage, CI on 2 operating systems × 3 Python versions plus a Docker check, public on GitHub at `github.com/prasad976999/github-mcp-server`.
+
+## Use cases: what someone can actually do with it
+
+Once the server is connected to Claude Desktop or Claude Code, a user just talks to Claude. These are realistic requests and the tools Claude chains together to answer them.
+
+| The user asks Claude | What happens behind the scenes |
+|---|---|
+| "What is `pallets/flask`, and is it still actively maintained?" | `get_repository` (stars, last update, open issues) → `list_issues` (recent activity) → a summary |
+| "Find popular Python MCP servers I could learn from." | `search_repositories` with `mcp server language:python stars:>100` |
+| "How does authentication work in this repo?" | `list_directory` to find the right folder → `get_file_contents` on the relevant files → an explanation that quotes the code |
+| "Are there good first issues I could contribute to?" | `list_issues` with labels `good first issue` |
+| "What's waiting for review?" | `list_pull_requests` (newest first, with `draft`, `head` and `base`) |
+| User picks the prompt **Review a pull request** for PR #123 | `review_pull_request` loads the description and diffs → Claude reviews and gives a verdict |
+| User picks the prompt **Summarise a repository** | `summarize_repository` → Claude calls `get_repository`, reads the README resource, `list_directory`, `list_issues` |
+| User attaches the README resource for a repo | `github://repos/{owner}/{repo}/readme` is read into the conversation as context |
+| "Open an issue for the typo we just found." | Only if writes are enabled: Claude shows the title and body, the host asks the user to approve, then `create_issue` |
+| "Why did that fail?" after a rate limit | `get_rate_limit` → Claude says when the budget resets instead of retrying |
+
+**Who it's for:** developers exploring unfamiliar codebases, reviewers who want a first-pass PR review, and anyone who wants Claude to answer questions about GitHub projects from live data rather than from memory.
+
+**How you'd demo it in an interview:** run `uv run python scripts/demo.py` for a one-command tour of every feature, or connect it to Claude Desktop, ask "summarise modelcontextprotocol/python-sdk and tell me what's being worked on", and point out each tool call as it happens. Then show the tests and the green CI run on GitHub.
 
 # Part 2. Core concepts
 
@@ -81,7 +122,8 @@ All messages are **JSON-RPC 2.0**: requests with an `id`, `method` and `params`,
 ## Transports
 
 - **stdio** (what we use): the host launches the server and talks over stdin/stdout. It's local, simple, and nothing listens on the network, so the token never leaves the machine. **Consequence: stdout belongs to the protocol.** Any `print()` corrupts the stream, which is why we log to stderr.
-- **Streamable HTTP** (step 8): the server runs as a web service for remote or multi-user setups. It needs authentication (OAuth) and hardening.
+- **Streamable HTTP** (step 8, `MCP_TRANSPORT=http`): the server runs as a web service; clients POST JSON-RPC to one endpoint, `/mcp`. Good for containers, shared or remote servers. Because anyone who can reach the port could use the token, it needs protection: we listen on loopback by default, require a bearer token anywhere else, and check the Host header (DNS rebinding protection). Public multi-user services would use OAuth 2.1.
+- **The tools don't change between transports.** Only how bytes arrive changes, which is why adding HTTP took one new module and a few lines in `main()`.
 
 ## Glossary
 
@@ -113,14 +155,15 @@ All messages are **JSON-RPC 2.0**: requests with an `id`, `method` and `params`,
 # Part 3. Architecture
 
 ```
-  Host: Claude Desktop / Claude Code / MCP Inspector
-          │   JSON-RPC over stdio
+  Host: Claude Desktop / Claude Code / MCP Inspector / scripts/demo.py
+          │   JSON-RPC over stdio, or over HTTP (Docker: bearer token + Host check)
           ▼
   ┌───────────────── github-mcp server ──────────────────┐
   │  server.py         MCP layer: tools, validation      │
   │  github_client.py  HTTP layer: auth, retries, errors │
   │  models.py         output shapes (trimmed)           │
   │  config.py         settings from the environment     │
+  │  http_app.py       HTTP mode: token, Host check      │
   └──────────────────────────────────────────────────────┘
           │   HTTPS
           ▼
@@ -135,6 +178,7 @@ Each layer has one job:
 | HTTP | `github_client.py` | Base URL, auth, timeouts, retries, rate limits, status codes | MCP |
 | Models | `models.py` | Which fields the model sees | Where data comes from |
 | Config | `config.py` | Environment variables, `.env` | Everything else |
+| Transport | `http_app.py` | HTTP security: bearer token, Host header, loopback | What the tools do |
 
 **Interview line:** *"I separated the protocol layer from the API layer, so each can be tested on its own and changed without touching the other."*
 
@@ -145,15 +189,19 @@ github-mcp-server/
 ├── pyproject.toml          # project metadata, dependencies, tool settings
 ├── uv.lock                 # exact versions of every package (reproducible installs)
 ├── .env.example            # documents the env vars; the real .env is git-ignored
+├── Dockerfile              # multi-stage image, non-root, health check (step 8)
+├── .dockerignore           # keeps .env, .git and tests out of the image (step 8)
 ├── .gitignore              # files git must never commit (.env, .venv, caches)
 ├── .github/
 │   ├── workflows/ci.yml    # CI: lint + tests on every push and PR (step 7)
 │   └── dependabot.yml      # automatic dependency update PRs (step 7)
+├── scripts/demo.py         # scripted tour of the server for demos (step 8)
 ├── README.md
 ├── src/github_mcp/
 │   ├── __init__.py         # package version
 │   ├── config.py           # settings from environment
 │   ├── github_client.py    # async GitHub REST client
+│   ├── http_app.py         # Streamable HTTP mode and its guards (step 8)
 │   ├── models.py           # trimmed output models
 │   └── server.py           # MCP server and tools
 ├── tests/
@@ -163,7 +211,8 @@ github-mcp-server/
 │   ├── test_contents.py    # step 3
 │   ├── test_issues_and_prs.py # step 4
 │   ├── test_errors_and_retries.py # step 5
-│   └── test_resources_prompts_and_writes.py # step 6
+│   ├── test_resources_prompts_and_writes.py # step 6
+│   └── test_http_transport.py # step 8
 └── docs/                   # roadmap, step explainers, this guide
 ```
 
@@ -181,6 +230,8 @@ Interviewers often ask *"why did you choose X?"* A good answer names the job it 
 | **MCP Python SDK v2** (`mcp`) | Implements the protocol: JSON-RPC, handshake, schemas, transports | Official SDK, kept in step with the spec; `MCPServer` turns plain functions into tools from their type hints and docstrings | Writing JSON-RPC by hand (error-prone); third-party frameworks; the low-level `Server` API in the same SDK (more control, more code) |
 | **httpx** | Makes HTTP requests to GitHub | Supports **async**, connection pooling, timeouts and base URLs; `respx` can mock it; API similar to `requests` | `requests` (no async), `aiohttp` (async but a different API, harder to mock), GitHub SDKs like PyGithub (sync, hide the HTTP details we want to control) |
 | **Pydantic v2** | Validates settings, defines output models, generates JSON Schemas | The MCP SDK is built on it, so schemas and validation come for free; fast (Rust core) | dataclasses (no validation), marshmallow, attrs |
+| **Starlette** | The web framework under HTTP mode (comes with the MCP SDK) | The SDK builds its HTTP app on it; small, async, ASGI standard; `TestClient` tests it in-process | FastAPI (built on Starlette, more than we need) |
+| **uvicorn** | The web server that runs the Starlette app in HTTP mode | The standard fast ASGI server, also a dependency of the SDK | Hypercorn, Gunicorn with uvicorn workers |
 | **python-dotenv** | Loads `.env` into environment variables | Tiny, standard way to keep local secrets out of code | `pydantic-settings` (heavier), setting variables by hand each session |
 
 ## Development tools (only needed while building)
@@ -196,6 +247,7 @@ Interviewers often ask *"why did you choose X?"* A good answer names the job it 
 | **GitHub Actions** | Runs CI on every push and pull request (step 7) | Built into GitHub, free for public repositories, huge library of ready-made actions | GitLab CI, CircleCI, Jenkins |
 | **Dependabot** | Opens pull requests for outdated dependencies (step 7) | Built into GitHub; understands `uv.lock` and Actions versions | Renovate |
 | **actionlint** | Checks workflow YAML for mistakes (step 7) | Catches typos and invalid expressions before pushing | Waiting for CI to fail |
+| **Docker** | Packages the server, its exact dependencies and Python into an image that runs the same anywhere (step 8) | The industry standard for deploying services; multi-stage builds keep images small | Podman (compatible), plain virtual machines |
 | **MCP Inspector** (`mcp dev`) | A browser UI that acts as an MCP host | Lets you call tools by hand and see the raw results without needing Claude | Testing only through Claude Desktop (slower, less visible) |
 | **Node.js** | Runs the Inspector | The Inspector is a JavaScript app | — |
 | **git** | Version control | Industry standard; one commit per step shows how the project grew | — |
@@ -1760,6 +1812,197 @@ updates:
 - **CI runs on that pull request**, so you only merge an update if the tests still pass. This is how CI and Dependabot work together: updates are automatic but never untested.
 - Security fixes matter: an out-of-date `httpx` or `pydantic` with a known vulnerability would be flagged.
 
+## 4.10 Deployment: HTTP mode, Docker and the demo (step 8)
+
+### stdio vs Streamable HTTP
+
+MCP defines how messages (JSON-RPC) travel between client and server. That's the **transport**. There are two that matter:
+
+| | stdio | Streamable HTTP |
+|---|---|---|
+| Who starts the server | The client starts it as a child process | It runs on its own, as a service |
+| How they talk | stdin / stdout | HTTP POST to one endpoint (`/mcp`) |
+| How many clients | Exactly one | Many, possibly on other machines |
+| Security | Nothing listens on the network | Anyone who can reach the port can call it |
+| Typical use | Claude Desktop, Claude Code on your laptop | A shared team server, a container, the cloud |
+
+Until now we only had stdio. It's the right default (simplest, safest), so it stays the default. HTTP is opt-in: `MCP_TRANSPORT=http`.
+
+**The key insight:** the tools, resources and prompts don't change at all. Only the way bytes arrive changes. That's why `server.py` needed just a few lines: the transport is a separate layer, which is exactly the point of MCP's design.
+
+```python
+def main() -> None:
+    logger.info("Starting GitHub MCP server v%s (%s)", __version__, settings.transport)
+    if settings.transport == "http":
+        from github_mcp.http_app import serve
+
+        serve(settings)
+    else:
+        mcp.run()  # stdio: the client starts this process and talks over stdin/stdout
+```
+
+The import is inside the `if` so stdio users never load the web server code.
+
+### The new problem: the network
+
+With stdio, only the program that started the server can talk to it. With HTTP, **anyone who can reach the port** can, and every request uses *your* GitHub token. So `http_app.py` adds three guards.
+
+#### Guard 1: loopback by default
+
+`MCP_HOST` defaults to `127.0.0.1` (**loopback**: only programs on the same computer can connect). `0.0.0.0` means "every network interface", which is what a container needs (see below) but is dangerous on a laptop on public Wi-Fi.
+
+#### Guard 2: a bearer token, required off loopback
+
+```python
+if settings.http_host not in LOOPBACK_HOSTS and settings.auth_token is None:
+    raise RuntimeError(f"Refusing to listen on {settings.http_host} without MCP_AUTH_TOKEN: ...")
+```
+
+- **Fail closed**: an unsafe configuration doesn't start with a warning nobody reads, it refuses to start, with a message saying how to fix it. The same philosophy as writes being off by default.
+- Clients send `Authorization: Bearer <token>`. A **bearer token** means "whoever bears (holds) this token is allowed in", like a ticket.
+
+The check is a small **ASGI middleware**. ASGI is the standard interface between Python web servers (uvicorn) and web apps (Starlette): an app is just `async def app(scope, receive, send)`. A middleware is an app that wraps another app and decides whether to pass the request on:
+
+```python
+async def __call__(self, scope, receive, send):
+    if scope["type"] != "http" or scope["path"] in PUBLIC_PATHS:
+        await self.app(scope, receive, send)        # lifespan events and /health pass
+        return
+    supplied = dict(scope["headers"]).get(b"authorization", b"")
+    if hmac.compare_digest(supplied, self._expected):
+        await self.app(scope, receive, send)        # right token: through
+        return
+    ...send a 401 with "WWW-Authenticate: Bearer"
+```
+
+- **`hmac.compare_digest`**, not `==`: `==` stops at the first different character, so a wrong guess that starts correctly takes slightly longer. Measured over many requests, that leaks the token one character at a time (a **timing attack**). `compare_digest` always takes the same time.
+- **401 Unauthorized** with `WWW-Authenticate: Bearer` is the standard HTTP way to say "you need a bearer token".
+- **Why not OAuth?** The SDK supports full OAuth 2.1, which is the right choice for a public multi-user service (each user logs in, gets their own scopes). For a single-owner server, a shared secret is simpler and adequate. Knowing *when* each is appropriate is the interview point.
+
+#### Guard 3: DNS rebinding protection
+
+A subtle browser attack: you visit `evil.example`. Its page makes your browser send requests to `evil.example`, then the attacker changes the DNS record of `evil.example` to point to `127.0.0.1`. Your browser now sends requests to *your* local server, but still with `Host: evil.example`. The defence is to refuse any request whose `Host` header isn't one we expect:
+
+```python
+security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"] + settings.allowed_hosts,
+    ...
+)
+```
+
+The SDK enables this automatically only when the host is loopback; in a container the host is `0.0.0.0`, so we turn it on explicitly. A refused request gets **421 Misdirected Request**. `MCP_ALLOWED_HOSTS` adds names when you deploy behind a real domain.
+
+#### Stateless and JSON
+
+```python
+app = mcp.streamable_http_app(stateless_http=True, json_response=True, ...)
+```
+
+- **Stateless**: each request stands alone; the server keeps no session between requests. Any copy of the server can answer any request, so you can run several behind a load balancer, and a restart loses nothing. We can do this because our server has no per-session state (no subscriptions, no server-to-client requests).
+- **JSON responses**: Streamable HTTP can answer with a stream of events (SSE) for long-running work with progress updates. Our tools answer in one go, so plain JSON is simpler to call and to debug with `curl`.
+- The GitHub client is still created **once** at startup: the SDK's session manager enters our lifespan once, not per request.
+
+#### `/health`
+
+```python
+@mcp.custom_route("/health", methods=["GET"])
+async def health(_request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok", "version": __version__})
+```
+
+A **liveness check**: Docker, Kubernetes and load balancers poll it to know the process is alive. It needs no token (it reveals nothing) and calls nothing (it must be cheap and must not use the GitHub rate limit).
+
+### The Dockerfile, line by line
+
+A **container image** packages the app, its exact dependencies and a Python runtime, so it runs the same on any machine with Docker. "Works on my machine" becomes "works on every machine".
+
+```dockerfile
+FROM python:3.13-slim AS build
+COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
+```
+
+- **`slim`**: a small Debian with Python, about 150 MB smaller than the full image. Smaller images download faster and have fewer packages that could have vulnerabilities.
+- **`COPY --from=<image>`**: grabs just the `uv` binary from uv's official image, the method uv's documentation recommends.
+
+```dockerfile
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project
+COPY README.md ./
+COPY src ./src
+RUN uv sync --locked --no-dev --no-editable
+```
+
+- **Layer caching**: each instruction is a cached layer, and Docker rebuilds from the first changed one. Dependencies change rarely, code changes often, so dependencies go first. Editing `server.py` then rebuilds in seconds instead of reinstalling everything.
+- **`--locked`**: the exact versions from `uv.lock`, the same guarantee as in CI.
+- **`--no-dev`**: no pytest or ruff in the image; they're not needed to run it.
+- **`--no-editable`**: installs the project as a normal package into `.venv`, so the source folder isn't needed at run time.
+
+```dockerfile
+FROM python:3.13-slim
+RUN useradd --create-home --uid 10001 mcp
+COPY --from=build --chown=mcp:mcp /app/.venv /app/.venv
+USER mcp
+```
+
+- **Multi-stage build**: the second `FROM` starts a fresh image and copies only the finished virtual environment. uv, caches and build files stay behind in the first stage. The result is smaller and has less in it to attack.
+- **Non-root user**: containers run as root by default. If the server were ever compromised, a non-root process can't modify the system. A habit security reviewers look for.
+
+```dockerfile
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 \
+    MCP_TRANSPORT=http MCP_HOST=0.0.0.0 MCP_PORT=8000
+EXPOSE 8000
+HEALTHCHECK ... CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+CMD ["github-mcp"]
+```
+
+- **`MCP_HOST=0.0.0.0`** inside the container: the container has its own network. Listening on its loopback would make the server unreachable even from your computer. So the image listens on all of the *container's* interfaces, which is why guard 2 forces you to set `MCP_AUTH_TOKEN`.
+- **`-p 127.0.0.1:8000:8000`** when you run it: publishes the port only on *your computer's* loopback. Two layers: the token, and not exposing the port to the network.
+- **`PYTHONUNBUFFERED=1`**: logs appear immediately in `docker logs`.
+- **`HEALTHCHECK`**: Docker polls `/health` and marks the container `healthy` or `unhealthy`. It uses Python's standard library because `slim` has no `curl`.
+- **`CMD ["github-mcp"]`**: the script from `[project.scripts]` in `pyproject.toml`. The JSON-array form runs it directly (no shell), so it receives stop signals properly.
+
+`.dockerignore` keeps `.env`, `.git`, `.venv`, tests and docs out of the **build context** (what's sent to Docker). Most importantly, **your token can never be baked into the image**. The token is passed at run time with `--env-file .env`.
+
+I built the image and ran it: about 257 MB, runs as uid 10001, `/health` answers, Docker reports it `healthy`, a request without the token gets 401, and with the token `server_status` reports `"transport": "http"`. Without `MCP_AUTH_TOKEN` it refuses to start with a one-line explanation.
+
+### CI: a Docker job
+
+A third job in `ci.yml` builds the image, starts it, waits for `/health`, and checks that a request without the token gets 401. So CI now proves the image builds, starts and is locked down on every push, not just that the Python tests pass.
+
+### The demo script (`scripts/demo.py`)
+
+An MCP **client** written with the SDK. It connects either by starting the server over stdio (like Claude Desktop does) or to a URL over HTTP, then lists the tools, resource templates and prompts, and calls the main tools on a real repository. It finishes with `create_issue` to show the safe refusal when writes are off.
+
+```python
+if url is None:
+    return Client(StdioServerParameters(command=sys.executable, args=["-m", "github_mcp.server"]))
+return Client(streamable_http_client(url, http_client=httpx2.AsyncClient(headers=headers)))
+```
+
+It's the same `Client` class the tests use, with a different transport, which again shows the transport is a separate layer. For an interview it's a reliable live demo: one command, and it shows every feature. A screen recording of it (or of Claude Desktop using the server) makes a good GIF for the README.
+
+### Tests (`tests/test_http_transport.py`)
+
+Starlette's **`TestClient`** runs the real HTTP app in-process: no port is opened, but every request goes through the full stack (middleware, Host checks, the MCP endpoint), and it runs startup and shutdown so our lifespan creates the GitHub client.
+
+| Test | What it checks | Why it's needed |
+|---|---|---|
+| `test_tools_are_served_over_http_on_loopback` | `tools/list` over HTTP returns our tools | HTTP mode works at all |
+| `test_tool_call_over_http_returns_structured_result` | `server_status` over HTTP returns structured output | A full tool call, not just a listing |
+| `test_missing_or_wrong_bearer_token_is_rejected` | No token or wrong token → 401 with `WWW-Authenticate` | The lock works. **Seen to fail when the token check is disabled.** |
+| `test_correct_bearer_token_is_accepted` | Right token → 200 | The lock opens for the right key |
+| `test_health_check_needs_no_token` | `/health` → 200 even with auth on | Docker's health check needs no secret |
+| `test_unknown_host_header_is_refused` | `Host: evil.example` → 421 | DNS rebinding protection. **Seen to fail when protection is off.** |
+| `test_extra_allowed_host_is_accepted` | `MCP_ALLOWED_HOSTS` names are let in | Deploying behind a real domain works |
+| `test_refuses_public_address_without_auth_token` | `0.0.0.0` without a token → `RuntimeError` | Fail closed |
+| `test_public_address_is_allowed_with_auth_token` | `0.0.0.0` with a token builds | The guard isn't over-eager |
+| `test_http_settings_are_read_from_environment` | `MCP_*` variables parsed (case, commas, spaces) | Config is where bugs hide |
+| `test_defaults_are_stdio_on_loopback_without_token` | Defaults are the safe ones | Safe defaults are a promise; a test keeps it |
+| `test_main_picks_the_transport` | `main()` runs stdio or HTTP by setting | The entry point is wired correctly |
+
+Coverage is now about **94%**.
+
 # Part 5. Commands you used
 
 All in PowerShell, inside `C:\Users\prasa\projects\github-mcp-server`.
@@ -1779,6 +2022,11 @@ All in PowerShell, inside `C:\Users\prasa\projects\github-mcp-server`.
 | `git add .` | Stages all changes | Chooses what goes in the next commit |
 | `git commit -m "..."` | Saves a snapshot with a message | One commit per step tells the project's story |
 | `git config --global user.name/user.email` | Sets your identity for commits | Commits are credited to you on GitHub |
+| `git push` | Uploads your commits to GitHub | Publishes the project; CI runs on every push |
+| `uv run python scripts/demo.py` | A scripted tour: lists tools, resources and prompts, calls the main tools | A reliable one-command live demo |
+| `docker build -t github-mcp .` | Builds the container image | Packages the server for deployment |
+| `docker run --rm --env-file .env -e MCP_AUTH_TOKEN=... -p 127.0.0.1:8000:8000 github-mcp` | Runs the server in HTTP mode | Token passed at run time, port only on your own machine |
+| `curl.exe http://127.0.0.1:8000/health` | Checks the container is alive | `curl.exe` because plain `curl` in PowerShell is a different command |
 
 **How the Inspector works:** `mcp dev` starts your server *and* a small web app. The web app acts as an MCP host: **Connect** sends `initialize`, **List Tools** sends `tools/list`, and **Run Tool** sends `tools/call`. You're doing by hand what Claude does automatically.
 
@@ -1968,6 +2216,35 @@ Least privilege: the job's token can only read the code, so a compromised depend
 **54. What does Dependabot add?**
 Automatic pull requests for outdated or vulnerable dependencies and actions. CI tests each one, so updates happen often but are never untested.
 
+## Deployment and HTTP (step 8)
+
+**55. stdio or HTTP: when would you use each?**
+stdio when the client runs on the same machine and starts the server, like Claude Desktop: simplest, and nothing listens on the network. HTTP when the server is a shared service or runs in a container or the cloud. The tools don't change, only the transport.
+
+**56. What changes for security when you expose an MCP server over HTTP?**
+Anyone who can reach it can act with its GitHub token. I listen on loopback by default, refuse to listen anywhere else without a bearer token, compare tokens in constant time, and check the Host header against DNS rebinding.
+
+**57. What is DNS rebinding, and how do you stop it?**
+A malicious web page makes a domain it controls resolve to 127.0.0.1, so your browser sends its requests to your local server. Checking the Host header blocks it, because those requests still carry the attacker's domain. My server answers them with 421.
+
+**58. Why `hmac.compare_digest` instead of `==` for the token?**
+`==` returns early at the first different character, so response times leak how much of a guess was right. `compare_digest` takes the same time either way, which prevents a timing attack.
+
+**59. Why stateless HTTP with JSON responses?**
+No session state means any instance can answer any request, so it scales horizontally behind a load balancer and survives restarts. My tools are simple request and response, so a plain JSON reply is enough and easy to debug with curl.
+
+**60. Walk me through your Dockerfile.**
+Two stages. The first installs dependencies with uv from the lock file, in their own layer so code changes rebuild fast, then installs the project. The second copies only the virtual environment into a fresh slim image, runs as a non-root user, and has a health check. Secrets are passed at run time and kept out by `.dockerignore`.
+
+**61. The container listens on 0.0.0.0. Isn't that unsafe?**
+Inside a container, loopback is the container's own, so the server must listen on all its interfaces to be reachable. It's safe because the server then insists on a bearer token, and I publish the port only on the host's loopback with `-p 127.0.0.1:8000:8000`.
+
+**62. Bearer token or OAuth?**
+A shared secret is enough for a server with one owner. For a public, multi-user service I'd use the SDK's OAuth 2.1 support, so each user authorizes with their own scopes and can be revoked individually.
+
+**63. How do you know the image works?**
+CI builds it, starts it, waits for `/health`, and checks that a request without the token gets 401, on every push. Locally I also checked it runs as a non-root user and Docker reports it healthy.
+
 # Part 7. Practise checklist
 
 - [ ] Say the 30-second pitch out loud without notes.
@@ -1980,4 +2257,7 @@ Automatic pull requests for outdated or vulnerable dependencies and actions. CI 
 - [ ] Explain the retry loop in `_request`: what is retried, what isn't, and why POST is different.
 - [ ] Explain the five safety layers around `create_issue`.
 - [ ] Walk through `ci.yml`: triggers, permissions, the matrix, and why `--locked`.
-- [ ] Answer all 54 questions in your own words, then compare.
+- [ ] Explain the three HTTP guards (loopback, bearer token, Host check) and why each exists.
+- [ ] Walk through the Dockerfile: the two stages, layer caching, non-root, health check.
+- [ ] Run `scripts/demo.py` and narrate what each call shows.
+- [ ] Answer all 63 questions in your own words, then compare.
