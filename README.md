@@ -6,6 +6,10 @@
 
 An [MCP](https://modelcontextprotocol.io) server, written with the official Python MCP SDK, that lets AI assistants (Claude Desktop, Claude Code, any MCP client) explore and work with GitHub: search repositories, read code, triage issues and review pull requests.
 
+![Demo: scripts/demo.py listing the tools, then searching, reading and listing issues on GitHub](docs/demo.gif)
+
+*`scripts/demo.py` against the live GitHub API: discovery, the main read tools, and the write tool refusing because writes are off.*
+
 It runs two ways: over **stdio**, started by the AI app itself, or as an **HTTP service** in Docker, protected by a bearer token.
 
 ## What you can ask an assistant to do with it
