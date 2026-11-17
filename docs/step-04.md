@@ -29,6 +29,7 @@ httpx parses this for us: `response.links["next"]["url"]`.
 ```python
 MAX_PAGES = 5
 
+
 async def get_paginated(self, path, params=None, *, max_items, keep=lambda item: True):
     url = path
     query = {**(params or {}), "per_page": min(100, max(max_items, 1))}
@@ -66,7 +67,9 @@ Line by line:
 ## 3. The tools in `server.py`
 
 ```python
-State = Annotated[Literal["open", "closed", "all"], Field(description="Filter by state. Defaults to open.")]
+State = Annotated[
+    Literal["open", "closed", "all"], Field(description="Filter by state. Defaults to open.")
+]
 Limit = Annotated[int, Field(ge=1, le=100, description="Maximum items to return, newest first")]
 ```
 
@@ -80,7 +83,9 @@ params = {"state": state, "sort": "created", "direction": "desc"}
 if labels:
     params["labels"] = labels
 items, has_more = await _github(ctx).get_paginated(
-    f"/repos/{owner}/{repo}/issues", params, max_items=limit,
+    f"/repos/{owner}/{repo}/issues",
+    params,
+    max_items=limit,
     keep=lambda item: "pull_request" not in item,
 )
 ```

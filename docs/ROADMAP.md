@@ -11,4 +11,4 @@ Each step ends with something that runs, a passing test suite, and a git commit.
 | 5 | Error handling, rate limits (`X-RateLimit-*`, `Retry-After`), retries with backoff | error taxonomy, idempotency, why errors go back to the model as text |
 | 6 | Resources (`github://...` URIs) and prompts (`review_pull_request`), a write tool (`create_issue`) with tool annotations | tools vs resources vs prompts, human-in-the-loop, least privilege tokens |
 | 7 | Test suite with `respx` mocks, GitHub Actions CI, ruff | testing code that calls external APIs, CI |
-| 8 | Dockerfile, Streamable HTTP transport option, README polish, demo GIF | deployment, stdio vs HTTP, presenting the project |
+| 8 | Dockerfile, Streamable HTTP transport with a bearer token, README polish, demo script | deployment, stdio vs HTTP, network security, containers, presenting the project |
